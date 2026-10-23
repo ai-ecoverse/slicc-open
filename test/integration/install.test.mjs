@@ -132,7 +132,7 @@ describe('install.sh', { skip: !curl && 'curl is not installed' }, () => {
     const text = readFileSync(launcher, 'utf8');
     assert.ok(text.includes(`'${entry}' "$@"`), text);
     const reported = await run(launcher, ['--version'], { env: env({}) });
-    assert.equal(reported.stdout, `scopen ${version}\n`);
+    assert.equal(reported.stdout, `${version}\n`);
     const printed = await run(launcher, [], { env: env({}) });
     assert.equal(printed.status, 2);
   });
@@ -165,7 +165,7 @@ describe('install.sh', { skip: !curl && 'curl is not installed' }, () => {
     });
     assert.equal(result.status, 0, result.stderr);
     const launched = await run(join(bin, 'scopen'), ['--version'], { env: env({}), cwd: h });
-    assert.equal(launched.stdout, `scopen ${version}\n`);
+    assert.equal(launched.stdout, `${version}\n`);
     const marker = readFileSync(join(bin, 'scopen'), 'utf8').split('\n')[1];
     const parsed = spawnSync('sh', ['-c', `${marker}; printf %s "$SCOPEN_INSTALL_DIR"`], {
       encoding: 'utf8',
@@ -350,7 +350,7 @@ describe('--upgrade through the installer', { skip: !curl && 'curl is not instal
     });
     assert.equal(upgraded.status, 0, upgraded.stderr);
     assert.equal(upgraded.stdout, `scopen: ${version} → 99.0.0\n`);
-    assert.equal((await run(launcher, ['--version'], { env: env({}) })).stdout, 'scopen 99.0.0\n');
+    assert.equal((await run(launcher, ['--version'], { env: env({}) })).stdout, '99.0.0\n');
     const again = await run(launcher, ['--upgrade'], {
       env: env({ HOME: h, SLICC_INSTALL_BASE_URL: url }),
     });
@@ -380,6 +380,10 @@ describe('install.ps1', () => {
     assert.match(text, /SCOPEN_INSTALL_DIR/);
     assert.doesNotMatch(text, /Invoke-Expression|\biex\b|cmd(\.exe)? \/c|Start-Process/i);
     assert.doesNotMatch(text, /^\s*exit\b/m);
+    assert.match(
+      text,
+      /'\(',\n\s+"`"\$\(& \$escape \$Node\)`" `"\$\(& \$escape \$Entry\)`" %\*",\n\s+'call :done %%ERRORLEVEL%%',\n\s+'exit \/b',\n\s+'\)',/
+    );
   });
 
   const pwsh = ['pwsh', 'pwsh.exe'].find(
@@ -428,13 +432,19 @@ describe('install.ps1', () => {
       const entry = join(local, 'slicc-open', version, 'host', 'scopen.mjs');
       assert.ok(existsSync(entry));
       const cmd = readFileSync(join(bin, 'scopen.cmd'), 'utf8');
-      assert.ok(cmd.includes(`"${entry}" %*`), cmd);
+      const lines = cmd.split('\r\n');
+      const at = lines.findIndex((line) => line.endsWith(` "${entry}" %*`));
+      assert.deepEqual(
+        lines.slice(at - 1, at + 4),
+        ['(', lines[at], 'call :done %%ERRORLEVEL%%', 'exit /b', ')'],
+        cmd
+      );
       const launched = await run(
         pwsh,
         ['-NoProfile', '-File', join(bin, 'scopen.ps1'), '--version'],
         { env: env({}) }
       );
-      assert.equal(launched.stdout.trim(), `scopen ${version}`);
+      assert.equal(launched.stdout.trim(), version);
       const help = await run(pwsh, ['-NoProfile', '-File', installPs1, '-Help'], { env: env({}) });
       assert.equal(help.status, 0);
       assert.match(help.stdout, /^usage: install\.ps1 \[-Version VERSION\] \[-Dir DIR\] \[-Help\]/);
