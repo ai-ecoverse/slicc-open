@@ -24,19 +24,13 @@ On Windows, in PowerShell:
 irm https://get.sliccy.ai/open.ps1 | iex
 ```
 
-The installers are `install.sh` and `install.ps1`, attached to every [GitHub release](https://github.com/ai-ecoverse/slicc-open/releases) with the package tarball (`slicc-open-<version>.tgz`) and `SHA256SUMS`, in the style of [mcpcat's](https://github.com/ai-ecoverse/mcpcat) `install.sh`. They check the tarball against `SHA256SUMS`, unpack it into a versioned directory (`${XDG_DATA_HOME:-~/.local/share}/slicc-open/<version>`, or `%LOCALAPPDATA%\slicc-open\<version>` on Windows), and write a `scopen` launcher that runs it with that Node. Without get.sliccy.ai, the same installer comes straight from the release:
+Without get.sliccy.ai, the same installer comes straight from the release:
 
 ```sh
 curl -fsSL https://github.com/ai-ecoverse/slicc-open/releases/latest/download/install.sh | sh
 ```
 
-| `install.sh` | `install.ps1` | |
-| --- | --- | --- |
-| `--version VERSION` | `-Version VERSION` | the release to install (default: the latest) |
-| `--dir DIR` | `-Dir DIR` | where the launcher goes (default: `~/.local/bin`; on Windows `%LOCALAPPDATA%\slicc-open\bin`, added to the user's `PATH`) |
-| `--help` | `-Help` | print the usage and exit 0 |
-
-Options reach `install.sh` after `sh -s --`, for example `curl -fsSL https://get.sliccy.ai/open | sh -s -- --version 1.2.0 --dir ~/bin`, and `install.ps1` through a script block: `& ([scriptblock]::Create((irm https://get.sliccy.ai/open.ps1))) -Version 1.2.0`. On Windows the launcher is `scopen.ps1`, next to a `scopen.cmd` for `cmd.exe`; both only start `node.exe` with the entry script and the arguments, and `scopen` itself never runs `cmd.exe`.
+Options reach `install.sh` after `sh -s --`, for example `curl -fsSL https://get.sliccy.ai/open | sh -s -- --version 1.2.0 --dir ~/bin`, and `install.ps1` through a script block: `& ([scriptblock]::Create((irm https://get.sliccy.ai/open.ps1))) -Version 1.2.0`. [The installer](#the-installer) has the details.
 
 With npm, on a machine with Node 24 or later:
 
@@ -152,7 +146,58 @@ Every host command takes `--upgrade`. It runs the latest release's installer (`i
 
 For slicc-open, `<package>` is `slicc-open`, and the commands are `scopen` on a host and `open`, `xdg-open` and `scopen` in SLICC.
 
-The launcher the installer writes sets `SCOPEN_INSTALL_DIR` to its own directory; that is how `scopen` knows the installer put it there (it removes the variable before it starts anything else), and without it `scopen` counts as installed with npm. The installer is downloaded from `https://github.com/ai-ecoverse/slicc-open/releases/latest/download/` and run as `sh install.sh --dir DIR`, or `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File install.ps1 -Dir DIR`; the line it prints, `scopen <version> installed to <launcher>`, names the new version. `SLICC_INSTALL_BASE_URL`, when set, replaces that release URL for `--upgrade` and for the installers' own downloads.
+## The installer
+
+This section is the installer contract that slicc-open, slicc-capture, slicc-audio and slicc-man share ([#7](https://github.com/ai-ecoverse/slicc-open/issues/7)). slicc-open's `install.sh`, `install.ps1`, `scripts/assets.mjs` and `host/upgrade.mjs` are the reference implementation, and the other repos copy them with the names swapped. The names below are written as placeholders; for slicc-open:
+
+| placeholder | slicc-open |
+| --- | --- |
+| `<pkg>` | `slicc-open` (the npm package is `@ai-ecoverse/<pkg>`, the repo `ai-ecoverse/<pkg>`) |
+| `<cmd>` | `scopen`, each of the package's host commands (its `bin`) |
+| `<CMD>` | `SCOPEN`, `<cmd>` in upper case with `-` as `_` |
+
+### Release assets
+
+semantic-release's `@semantic-release/npm` packs the package into `release/` (`tarballDir`). `@semantic-release/exec` then runs `node scripts/assets.mjs release <version>`, which renames the tarball to `<pkg>-<version>.tgz`, copies `install.sh` and `install.ps1` next to it, and writes `SHA256SUMS`: one `<sha256>  <name>` line each for the tarball, `install.sh` and `install.ps1`, in that order. `@semantic-release/github` attaches all four files to the release. `ci.yml` needs no release step of its own.
+
+### Options and exit codes
+
+| `install.sh` | `install.ps1` | |
+| --- | --- | --- |
+| `--version VERSION` (or `--version=VERSION`; a leading `v` is dropped) | `-Version VERSION` | the release to install (default: the latest) |
+| `--dir DIR` (or `--dir=DIR`) | `-Dir DIR` | where the launchers go (default: `~/.local/bin`; on Windows `%LOCALAPPDATA%\<pkg>\bin`) |
+| `--help` (or `-h`) | `-Help` | print the usage to stdout and exit 0 |
+
+Only the flags select anything: no environment variable stands in for `--version` or `--dir`. `install.sh` exits **0** when it installed, **1** when something failed (a download, a checksum, no Node and no way to get one), with `install.sh: <what>` on stderr, and **2** for an unknown option or a missing value, with the usage on stderr. `install.ps1` exits 0 or 1 the same way when it is run as a file, and its parameters are PowerShell's own, so an unknown one is PowerShell's error. Run through `irm … | iex` or a script block, it prints the error and returns instead of calling `exit`, so it never closes the user's PowerShell.
+
+### Node
+
+The launchers run the package with Node 24 or later. The installer uses the first `node` on `PATH` when it is new enough, otherwise one it downloaded before, into `<data>/node`. Failing both, it downloads the newest LTS release of 24 or later (or the newest release, when no LTS qualifies) from `index.json`. That download is `node-<version>-<os>-<arch>.tar.gz` (`darwin` or `linux`, `x64` or `arm64`), or `node-<version>-win-<arch>.zip` on Windows, checked against that release's `SHASUMS256.txt`. `.tar.gz` is used because `xz` isn't on every minimal Linux. On musl Linux, where nodejs.org has no build, the installer says to install Node with the package manager and exits 1.
+
+### Downloads
+
+| variable | default | |
+| --- | --- | --- |
+| `SLICC_INSTALL_BASE_URL` | `https://github.com/ai-ecoverse/<pkg>/releases/latest/download`, or `…/releases/download/v<version>` with `--version` | the directory holding the release assets (`SHA256SUMS`, `<pkg>-<version>.tgz`, `install.sh`, `install.ps1`) |
+| `SLICC_NODE_DIST_BASE` | `https://nodejs.org/dist` | where `index.json` and `v<version>/SHASUMS256.txt` and the Node archives are |
+
+`install.sh` fetches with `curl`, else `wget` (`curl` also reads the `file://` URLs the tests use), and checks checksums with `sha256sum`, else `shasum -a 256`. `install.ps1` uses `Invoke-WebRequest` and `Get-FileHash`. Without `--version`, the tarball is the `<pkg>-<version>.tgz` named in `SHA256SUMS`, so the version comes from the release itself. A tarball whose checksum doesn't match is refused before anything is unpacked.
+
+### Files
+
+The tarball is unpacked (with `tar`, `%SystemRoot%\System32\tar.exe` on Windows) into a temporary directory next to the versioned data directory `<data>/<version>`. When its `package.json` has a non-empty `dependencies` or `optionalDependencies`, the installer runs `npm install --omit=dev --ignore-scripts --no-audit --no-fund` there. It uses the npm that comes with the Node it picked, run by that Node (`<node dir>/../lib/node_modules/npm`, or `node_modules\npm` next to `node.exe`; `install.sh` falls back to `npm` on `PATH`). npm's output goes to stderr. Without such dependencies the step is skipped, so it needs neither npm nor the network. A failed `npm install`, or a missing npm, exits 1 and removes the partial directory. Only then does the directory replace `<data>/<version>`, so a failed install never leaves a broken version behind. `<data>` is `${XDG_DATA_HOME:-~/.local/share}/<pkg>`, or `%LOCALAPPDATA%\<pkg>` on Windows. Other versions stay where they are, and there is no `current` link. Each launcher names its version's entry script, `<data>/<version>/host/<cmd>.mjs`, and the Node it was installed with, by absolute path.
+
+| platform | launchers in `DIR` | what they do |
+| --- | --- | --- |
+| macOS, Linux | `<cmd>`, a POSIX sh script | sets and exports `<CMD>_INSTALL_DIR='<DIR>'`, then `exec '<node>' '<entry>' "$@"`; every path is single-quoted, so no path is ever evaluated |
+| Windows | `<cmd>.ps1` (UTF-8 with a BOM) | saves the caller's `$env:<CMD>_INSTALL_DIR` and sets it, runs `& '<node.exe>' '<entry>' @args` in `try`, restores the old value in `finally` (or removes the variable when it was unset), then exits with node's exit code. A `.ps1` runs inside the caller's PowerShell session, and this keeps the variable from leaking into that session |
+| Windows | `<cmd>.cmd` (UTF-8, code page 65001 while it runs) | sets `<CMD>_INSTALL_DIR`, then runs `"<node.exe>" "<entry>" %* & call :done %%ERRORLEVEL%% & exit /b` as one line, so a `)` in an argument can't end anything early, and a launcher that `--upgrade` rewrites mid-run is never read again; `:done` restores the code page and exits with node's status |
+
+Both Windows launchers only start `node.exe` with the entry script and the arguments, and `<cmd>` itself never runs `cmd.exe`. On Windows the installer adds `DIR` to the user's `PATH` when it isn't there already; elsewhere it prints the `export PATH=…` line to add when `DIR` isn't on `PATH`. After writing the launchers, the installer runs each command's `--version` and requires the version it installed, either alone (`1.2.0`) or in the older `<cmd> 1.2.0` form, so that a `--version` naming an older release still installs. Then it prints `<cmd> <version> installed to <launcher>` to stdout for each command.
+
+### How `--upgrade` uses it
+
+`<CMD>_INSTALL_DIR` is how a command knows the installer put it there. When it is set, `--upgrade` uses Node's `fetch` to download `install.sh` (or `install.ps1` on Windows) from `SLICC_INSTALL_BASE_URL`, or the latest release without it, into a temporary directory. The download has 60 seconds (`AbortSignal.timeout`); after that it prints `<cmd>: download timed out` to stderr and exits 1. It runs `sh install.sh --dir <CMD>_INSTALL_DIR`, or `powershell.exe` (else `pwsh.exe`) `-NoProfile -NonInteractive -ExecutionPolicy Bypass -File install.ps1 -Dir <CMD>_INSTALL_DIR`, with the installer's stderr passed through. The new version is the one in the installer's `<cmd> <version> installed to` line. A download that fails, an installer that exits non-zero or doesn't print that line, or a missing `sh` or PowerShell makes `--upgrade` exit 1. Without `<CMD>_INSTALL_DIR`, the command counts as installed with npm. Commands remove `<CMD>_INSTALL_DIR` from the environment of everything they start.
 
 ## Development
 

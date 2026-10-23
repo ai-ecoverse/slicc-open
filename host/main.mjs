@@ -159,7 +159,11 @@ async function windows(ctx, plan, values) {
 async function open(ctx, parsed) {
   const resolved = resolveTargets(parsed, ctx.cwd);
   if (resolved.error) return fail(ctx, resolved.error);
-  if (ctx.platform === 'darwin') return macos(ctx, parsed, resolved.targets);
+  if (ctx.platform === 'darwin') {
+    const env = { ...ctx.env };
+    delete env.SCOPEN_INSTALL_DIR;
+    return macos({ ...ctx, env }, parsed, resolved.targets);
+  }
   const plan = settings(parsed, ctx.cwd);
   const values = [...plan.urls, ...resolved.targets.map((target) => target.value)];
   if (plan.stdin) {
@@ -182,8 +186,9 @@ export async function run({
   platform = process.platform,
   cwd = process.cwd(),
   fds = [0, 1, 2],
+  timeout = 60000,
 } = {}) {
-  const ctx = { env, platform, cwd, fds, hidden: false };
+  const ctx = { env, platform, cwd, fds, timeout, hidden: false };
   if (argv.length === 0) {
     say(fds[2], `${usage}\n`);
     return 2;

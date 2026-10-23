@@ -10,13 +10,14 @@ export function version() {
   return JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 }
 
-async function download(url) {
+async function download(url, timeout) {
   try {
-    const response = await fetch(url, { redirect: 'follow' });
-    if (!response.ok) return { error: `HTTP ${response.status}` };
+    const response = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(timeout) });
+    if (!response.ok) return { error: `could not download ${url}: HTTP ${response.status}` };
     return { text: await response.text() };
   } catch (error) {
-    return { error: error.cause?.message ?? error.message };
+    if (error.name === 'TimeoutError') return { error: 'download timed out' };
+    return { error: `could not download ${url}: ${error.cause?.message ?? error.message}` };
   }
 }
 
@@ -38,8 +39,8 @@ export async function upgrade(ctx) {
   }
   const name = ctx.platform === 'win32' ? 'install.ps1' : 'install.sh';
   const url = `${(ctx.env.SLICC_INSTALL_BASE_URL || latest).replace(/\/+$/, '')}/${name}`;
-  const fetched = await download(url);
-  if (fetched.error) return fail(ctx, `could not download ${url}: ${fetched.error}`);
+  const fetched = await download(url, ctx.timeout ?? 60000);
+  if (fetched.error) return fail(ctx, fetched.error);
   const scratch = mkdtempSync(join(tmpdir(), 'scopen-upgrade-'));
   try {
     const path = join(scratch, name);

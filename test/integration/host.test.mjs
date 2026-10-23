@@ -95,7 +95,15 @@ const everything = [
   'myapp',
 ];
 
-async function scopen({ platform, argv, names = everything, extra = {}, stdin = '', cwd }) {
+async function scopen({
+  platform,
+  argv,
+  names = everything,
+  extra = {},
+  stdin = '',
+  cwd,
+  timeout,
+}) {
   const bin = tools(names);
   const log = mkdtempSync(join(scratch, 'log-'));
   const dir = cwd ?? workdir();
@@ -108,7 +116,7 @@ async function scopen({ platform, argv, names = everything, extra = {}, stdin = 
   const env = { ...base(), PATH: bin, FAKE_LOG: join(log, 'calls'), ...extra };
   let code;
   try {
-    code = await run({ argv, env, platform, cwd: dir, fds });
+    code = await run({ argv, env, platform, cwd: dir, fds, timeout });
   } finally {
     for (const fd of fds) closeSync(fd);
   }
@@ -253,8 +261,13 @@ describe('scopen on macOS', () => {
   });
 
   it('opens a target after -- as an absolute path, without passing -- on', async () => {
-    const result = await scopen({ platform: 'darwin', argv: ['-W', '--', '-weird'] });
+    const result = await scopen({
+      platform: 'darwin',
+      argv: ['-W', '--', '-weird'],
+      extra: { SCOPEN_INSTALL_DIR: '/nowhere' },
+    });
     assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.calls[0].env.SCOPEN_INSTALL_DIR, undefined);
     assert.deepEqual(result.calls[0].argv, ['-W', join(result.cwd, '-weird')]);
   });
 
@@ -884,6 +897,50 @@ describe('scopen --upgrade', () => {
     });
     assert.equal(noShell.code, 1);
     assert.equal(noShell.stderr, 'scopen: no shell found to run install.sh (tried sh)\n');
+  });
+
+  it('gives up on a download that never answers, after the timeout', async () => {
+    const sockets = new Set();
+    const silent = createServer(() => {});
+    silent.on('connection', (socket) => sockets.add(socket));
+    await new Promise((done) => silent.listen(0, '127.0.0.1', done));
+    try {
+      for (const [prefix, body] of [
+        ['headers', false],
+        ['body', true],
+      ]) {
+        if (body) {
+          silent.removeAllListeners('request');
+          silent.on('request', (request, response) => {
+            response.writeHead(200);
+            response.write('#!/bin/sh\n');
+          });
+        }
+        const started = Date.now();
+        const result = await scopen({
+          platform: 'linux',
+          argv: ['--upgrade'],
+          timeout: 300,
+          extra: {
+            SCOPEN_INSTALL_DIR: '/d',
+            SLICC_INSTALL_BASE_URL: `http://127.0.0.1:${silent.address().port}/${prefix}`,
+          },
+        });
+        assert.deepEqual(
+          [result.code, result.stdout, result.stderr],
+          [1, '', 'scopen: download timed out\n']
+        );
+        assert.ok(Date.now() - started < 5000);
+        assert.deepEqual(result.calls, []);
+      }
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      silent.close();
+    }
+  });
+
+  it('waits 60 seconds for the download by default', () => {
+    assert.match(readFileSync(join(root, 'host/main.mjs'), 'utf8'), /timeout = 60000,/);
   });
 
   it('runs install.ps1 with -Dir through PowerShell on Windows', async () => {

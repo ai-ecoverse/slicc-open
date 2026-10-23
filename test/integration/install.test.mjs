@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -51,8 +53,6 @@ function release(at, as = version, patch = () => {}) {
     encoding: 'utf8',
   });
   assert.equal(assets.status, 0, assets.stderr);
-  cpSync(installSh, join(dir, 'install.sh'));
-  cpSync(installPs1, join(dir, 'install.ps1'));
   if (at) cpSync(dir, at, { recursive: true });
   return dir;
 }
@@ -72,6 +72,37 @@ function run(file, args, options = {}) {
   });
 }
 
+function sha256(path) {
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
+}
+
+function dependency() {
+  const source = mkdtempSync(join(scratch, 'dep-'));
+  writeFileSync(
+    join(source, 'package.json'),
+    JSON.stringify({ name: 'scopen-test-dep', version: '1.0.0', main: 'index.js' })
+  );
+  writeFileSync(join(source, 'index.js'), 'module.exports = 42;\n');
+  const out = mkdtempSync(join(scratch, 'dep-out-'));
+  const pack = spawnSync('npm', ['pack', '--ignore-scripts', '--pack-destination', out], {
+    cwd: source,
+    encoding: 'utf8',
+  });
+  assert.equal(pack.status, 0, pack.stderr);
+  return join(out, 'scopen-test-dep-1.0.0.tgz');
+}
+
+function depending(spec, field = 'dependencies') {
+  return (source) => {
+    const path = join(source, 'package.json');
+    const pkg = JSON.parse(readFileSync(path, 'utf8'));
+    pkg[field] = { 'scopen-test-dep': spec };
+    writeFileSync(path, JSON.stringify(pkg));
+  };
+}
+
+const npmCache = () => ({ npm_config_cache: mkdtempSync(join(scratch, 'npm-cache-')) });
+
 function home() {
   return mkdtempSync(join(scratch, 'home-'));
 }
@@ -87,13 +118,19 @@ function env(extra) {
 const curl = which('curl');
 
 describe('scripts/assets.mjs', () => {
-  it('names the tarball slicc-open-<version>.tgz and writes SHA256SUMS', () => {
+  it('names the tarball slicc-open-<version>.tgz and writes SHA256SUMS for it and both installers', () => {
     const dir = release();
-    const sums = readFileSync(join(dir, 'SHA256SUMS'), 'utf8');
-    assert.match(
-      sums,
-      new RegExp(`^[0-9a-f]{64}  slicc-open-${version.replaceAll('.', '\\.')}\\.tgz\\n$`)
+    const lines = readFileSync(join(dir, 'SHA256SUMS'), 'utf8').split('\n');
+    assert.deepEqual(
+      lines.map((line) => line.slice(66)),
+      [`slicc-open-${version}.tgz`, 'install.sh', 'install.ps1', '']
     );
+    for (const line of lines.slice(0, 3)) {
+      const [sum, name] = line.split('  ');
+      assert.equal(sum, sha256(join(dir, name)), name);
+    }
+    assert.equal(readFileSync(join(dir, 'install.sh'), 'utf8'), readFileSync(installSh, 'utf8'));
+    assert.equal(readFileSync(join(dir, 'install.ps1'), 'utf8'), readFileSync(installPs1, 'utf8'));
     assert.ok(existsSync(join(dir, `slicc-open-${version}.tgz`)));
     assert.ok(!existsSync(join(dir, `ai-ecoverse-slicc-open-${version}.tgz`)));
     const bad = spawnSync(process.execPath, [join(root, 'scripts/assets.mjs'), dir, 'nope']);
@@ -130,12 +167,45 @@ describe('install.sh', { skip: !curl && 'curl is not installed' }, () => {
     );
     const entry = join(h, '.local/share/slicc-open', version, 'host/scopen.mjs');
     assert.ok(existsSync(entry));
+    assert.ok(!existsSync(join(h, '.local/share/slicc-open', version, 'node_modules')));
     const text = readFileSync(launcher, 'utf8');
     assert.ok(text.includes(`'${entry}' "$@"`), text);
     const reported = await run(launcher, ['--version'], { env: env({}) });
     assert.equal(reported.stdout, `${version}\n`);
     const printed = await run(launcher, [], { env: env({}) });
     assert.equal(printed.status, 2);
+  });
+
+  for (const field of ['dependencies', 'optionalDependencies']) {
+    it(`installs ${field} with npm when package.json has some`, async () => {
+      const withDep = release(undefined, '0.8.0', depending(`file:${dependency()}`, field));
+      const h = home();
+      const result = await run('sh', [installSh, '--version', '0.8.0', '--dir', join(h, 'bin')], {
+        env: env({ HOME: h, SLICC_INSTALL_BASE_URL: pathToFileURL(withDep).href, ...npmCache() }),
+      });
+      assert.equal(result.status, 0, result.stderr);
+      const installed = join(
+        h,
+        '.local/share/slicc-open/0.8.0/node_modules/scopen-test-dep/index.js'
+      );
+      assert.equal(readFileSync(installed, 'utf8'), 'module.exports = 42;\n');
+      assert.equal(
+        result.stdout.split('\n')[0],
+        `scopen 0.8.0 installed to ${join(h, 'bin', 'scopen')}`
+      );
+    });
+  }
+
+  it('fails with exit 1 and leaves no version directory when npm install fails', async () => {
+    const broken = release(undefined, '0.7.0', depending(`file:${join(scratch, 'missing.tgz')}`));
+    const h = home();
+    const result = await run('sh', [installSh, '--version', '0.7.0', '--dir', join(h, 'bin')], {
+      env: env({ HOME: h, SLICC_INSTALL_BASE_URL: pathToFileURL(broken).href, ...npmCache() }),
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /install\.sh: npm install failed for slicc-open-0\.7\.0\.tgz\n$/);
+    assert.deepEqual(readdirSync(join(h, '.local/share/slicc-open')), []);
+    assert.ok(!existsSync(join(h, 'bin', 'scopen')));
   });
 
   it('takes --version, and XDG_DATA_HOME for the data', async () => {
@@ -217,10 +287,7 @@ describe('install.sh', { skip: !curl && 'curl is not installed' }, () => {
     }
   });
 
-  const xz = which('xz');
-  it('downloads Node 24 when PATH has none or an older one', {
-    skip: !xz && 'xz is not installed',
-  }, async () => {
+  it('downloads Node 24 as .tar.gz when PATH has none or an older one', async () => {
     const os = { darwin: 'darwin', linux: 'linux' }[process.platform];
     const arch = { x64: 'x64', arm64: 'arm64' }[process.arch];
     if (!os || !arch) return;
@@ -233,28 +300,20 @@ describe('install.sh', { skip: !curl && 'curl is not installed' }, () => {
     );
     chmodSync(join(dist, 'build', name, 'bin', 'node'), 0o755);
     mkdirSync(join(dist, 'v24.99.0'));
-    const archive = join(dist, 'v24.99.0', `${name}.tar.xz`);
+    const archive = join(dist, 'v24.99.0', `${name}.tar.gz`);
     const tar = spawnSync('sh', [
       '-c',
-      'tar cf - -C "$1" "$2" | xz -c > "$3"',
+      'tar czf "$3" -C "$1" "$2"',
       'sh',
       join(dist, 'build'),
       name,
       archive,
     ]);
     assert.equal(tar.status, 0, String(tar.stderr));
-    const sum = spawnSync(
-      process.execPath,
-      [
-        '-e',
-        `const c=require('node:crypto');process.stdout.write(c.createHash('sha256').update(require('node:fs').readFileSync(process.argv[1])).digest('hex'))`,
-        archive,
-      ],
-      { encoding: 'utf8' }
-    ).stdout;
+    const sum = sha256(archive);
     writeFileSync(
       join(dist, 'v24.99.0', 'SHASUMS256.txt'),
-      `${'0'.repeat(64)}  other.tar.xz\n${sum}  ${name}.tar.xz\n`
+      `${'0'.repeat(64)}  ${name}.tar.xz\n${sum}  ${name}.tar.gz\n`
     );
     writeFileSync(
       join(dist, 'index.json'),
@@ -286,7 +345,6 @@ describe('install.sh', { skip: !curl && 'curl is not installed' }, () => {
       'dirname',
       'basename',
       'tar',
-      'xz',
       'gzip',
       'ldd',
       'perl',
@@ -398,6 +456,16 @@ describe('install.ps1', () => {
     assert.match(text, /SCOPEN_INSTALL_DIR/);
     assert.doesNotMatch(text, /Invoke-Expression|\biex\b|cmd(\.exe)? \/c|Start-Process/i);
     assert.doesNotMatch(text, /^\s*exit\b/m);
+    for (const line of [
+      "'$scopenPrevious = $env:SCOPEN_INSTALL_DIR',",
+      "'try {',",
+      "'  $scopenStatus = $LASTEXITCODE',",
+      "'} finally {',",
+      "'  if ($null -eq $scopenPrevious) { Remove-Item -LiteralPath Env:SCOPEN_INSTALL_DIR -ErrorAction SilentlyContinue } else { $env:SCOPEN_INSTALL_DIR = $scopenPrevious }',",
+      "'exit $scopenStatus',",
+    ]) {
+      assert.ok(text.includes(line), line);
+    }
     assert.ok(text.includes('`" %* & call :done %%ERRORLEVEL%% & exit /b",\n'));
     assert.doesNotMatch(text, /^\s+'\(',$/m);
   });
@@ -463,6 +531,23 @@ describe('install.ps1', () => {
         { env: env({}) }
       );
       assert.equal(launched.stdout.trim(), version);
+      const launcher = join(bin, 'scopen.ps1').replaceAll("'", "''");
+      for (const [before, after] of [
+        ["$env:SCOPEN_INSTALL_DIR = 'before'", 'before'],
+        ['Remove-Item Env:SCOPEN_INSTALL_DIR -ErrorAction SilentlyContinue', 'unset'],
+      ]) {
+        const session = await run(
+          pwsh,
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            `${before}; & '${launcher}' --nope 2>$null; 'code=' + $LASTEXITCODE; 'dir=' + $(if ($null -eq $env:SCOPEN_INSTALL_DIR) { 'unset' } else { $env:SCOPEN_INSTALL_DIR })`,
+          ],
+          { env: env({}) }
+        );
+        assert.deepEqual(session.stdout.trim().split(/\r?\n/), ['code=2', `dir=${after}`]);
+      }
       const help = await run(pwsh, ['-NoProfile', '-File', installPs1, '-Help'], { env: env({}) });
       assert.equal(help.status, 0);
       assert.match(help.stdout, /^usage: install\.ps1 \[-Version VERSION\] \[-Dir DIR\] \[-Help\]/);
@@ -500,6 +585,28 @@ describe('install.ps1', () => {
         }
       );
       assert.equal(block.stdout.trim(), 'still here');
+      release(served, '0.8.0', depending(`file:${dependency()}`));
+      const deps = await run(
+        pwsh,
+        ['-NoProfile', '-NonInteractive', '-File', installPs1, '-Version', '0.8.0', '-Dir', bin],
+        { env: env({ LOCALAPPDATA: local, SLICC_INSTALL_BASE_URL: url, ...npmCache() }) }
+      );
+      assert.equal(deps.status, 0, deps.stderr);
+      assert.ok(existsSync(join(local, 'slicc-open/0.8.0/node_modules/scopen-test-dep/index.js')));
+      release(served, '0.7.0', depending(`file:${join(scratch, 'missing.tgz')}`));
+      const failed = await run(
+        pwsh,
+        ['-NoProfile', '-NonInteractive', '-File', installPs1, '-Version', '0.7.0', '-Dir', bin],
+        { env: env({ LOCALAPPDATA: local, SLICC_INSTALL_BASE_URL: url, ...npmCache() }) }
+      );
+      assert.equal(failed.status, 1);
+      assert.match(failed.stderr, /install\.ps1: npm install failed for slicc-open-0\.7\.0\.tgz/);
+      assert.deepEqual(
+        readdirSync(join(local, 'slicc-open')).filter(
+          (name) => !/^\d/.test(name) || name === '0.7.0'
+        ),
+        []
+      );
     } finally {
       server.close();
     }

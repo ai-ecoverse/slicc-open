@@ -143,7 +143,7 @@ ensure_node() {
   _version="$(pick_node "$_index" 1)"
   [ -n "$_version" ] || _version="$(pick_node "$_index" 0)"
   [ -n "$_version" ] || die "no Node $MIN_NODE or later in $NODE_DIST_BASE/index.json"
-  _archive="node-$_version-$_os-$_arch.tar.xz"
+  _archive="node-$_version-$_os-$_arch.tar.gz"
   fetch "$NODE_DIST_BASE/$_version/SHASUMS256.txt" "$_tmp/SHASUMS256.txt"
   fetch "$NODE_DIST_BASE/$_version/$_archive" "$_tmp/$_archive"
   verify "$_tmp/$_archive" "$(sum_of "$_tmp/SHASUMS256.txt" "$_archive")"
@@ -151,11 +151,7 @@ ensure_node() {
   _extract="$DATA_DIR/.node-$$"
   rm -rf "$_extract"
   mkdir -p "$_extract"
-  if command -v xz >/dev/null 2>&1; then
-    xz -dc "$_tmp/$_archive" | tar xf - -C "$_extract" --strip-components=1
-  else
-    tar xJf "$_tmp/$_archive" -C "$_extract" --strip-components=1
-  fi
+  tar xzf "$_tmp/$_archive" -C "$_extract" --strip-components=1
   rm -rf "$_tmp" "$DATA_DIR/node"
   mv "$_extract" "$DATA_DIR/node"
   printf 'install.sh: Node %s installed to %s\n' "$_version" "$DATA_DIR/node" >&2
@@ -179,7 +175,8 @@ fi
 BASE_URL="${BASE_URL%/}"
 
 TMP_INSTALL="$(mktemp -d)"
-trap 'rm -rf "$TMP_INSTALL"' EXIT
+EXTRACT=""
+trap 'rm -rf "$TMP_INSTALL" ${EXTRACT:+"$EXTRACT"}' EXIT
 
 fetch "$BASE_URL/SHA256SUMS" "$TMP_INSTALL/SHA256SUMS"
 if [ -n "$VERSION" ]; then
@@ -201,6 +198,17 @@ mkdir -p "$EXTRACT"
 tar xzf "$TMP_INSTALL/$TGZ" -C "$EXTRACT" --strip-components=1
 ENTRY="$BUNDLE_DIR/host/$BIN_NAME.mjs"
 [ -f "$EXTRACT/host/$BIN_NAME.mjs" ] || die "$TGZ has no host/$BIN_NAME.mjs"
+if "$NODE_ABS" -e 'const p = require(process.argv[1]); process.exit(Object.keys({ ...p.dependencies, ...p.optionalDependencies }).length > 0 ? 0 : 1)' "$EXTRACT/package.json"; then
+  NODE_DIR="$(dirname "$NODE_ABS")"
+  NPM_CLI="$NODE_DIR/../lib/node_modules/npm/bin/npm-cli.js"
+  if [ -f "$NPM_CLI" ]; then
+    (cd "$EXTRACT" && PATH="$NODE_DIR:$PATH" "$NODE_ABS" "$NPM_CLI" install --omit=dev --ignore-scripts --no-audit --no-fund >&2) || die "npm install failed for $TGZ"
+  elif command -v npm >/dev/null 2>&1; then
+    (cd "$EXTRACT" && PATH="$NODE_DIR:$PATH" npm install --omit=dev --ignore-scripts --no-audit --no-fund >&2) || die "npm install failed for $TGZ"
+  else
+    die "$TGZ has dependencies, and there is no npm next to $NODE_ABS or on PATH"
+  fi
+fi
 rm -rf "$BUNDLE_DIR"
 mv "$EXTRACT" "$BUNDLE_DIR"
 

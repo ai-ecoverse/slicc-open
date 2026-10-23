@@ -100,7 +100,12 @@ describe('the repository', () => {
     assert.ok(names.indexOf('@semantic-release/exec') < names.indexOf('@semantic-release/github'));
     assert.deepEqual(
       plugin('@semantic-release/github')[1].assets.map((asset) => asset.path),
-      ['release/slicc-open-*.tgz', 'release/SHA256SUMS', 'install.sh', 'install.ps1']
+      [
+        'release/slicc-open-*.tgz',
+        'release/SHA256SUMS',
+        'release/install.sh',
+        'release/install.ps1',
+      ]
     );
     assert.ok(existsSync(join(root, 'install.sh')));
     assert.ok(existsSync(join(root, 'install.ps1')));
