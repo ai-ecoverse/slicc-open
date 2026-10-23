@@ -116,7 +116,11 @@ local_path() {
 }
 check() {
   local_path "$1"
-  err=$(head -c 1 -- "$p" 2>&1 >/dev/null) && return
+  if [ "$mode" = -R ]; then
+    err=$(ls -d -- "$p" 2>&1 >/dev/null) && return
+  else
+    err=$(head -c 1 -- "$p" 2>&1 >/dev/null) && return
+  fi
   err=${err##*"$nl"}
   die "$1: ${err##*: }"
 }
@@ -182,20 +186,11 @@ tell() {
 }
 talk() {
   printf '%s\n' "$h" | cat >&3 || return 1
-  if [ "$1" = curl ]; then
-    curl -fsSL -- "$2" >&3 || return 3
-  else
-    cat -- "$2" >&3 || return 1
-  fi
+  cat -- "$1" >&3 || return 1
   cat <&3
 }
 ask() {
-  res=$(talk "$1" "$2" 2>&1 3<>"$dev") && return
-  if [ $? -eq 3 ]; then
-    res=${res##*"$nl"}
-    die "$3: $res"
-  fi
-  refused "$3"
+  res=$(talk "$1" 2>&1 3<>"$dev") || refused "$2"
 }
 image() {
   check "$1"
@@ -237,7 +232,7 @@ open_path() {
   esac
   [ -z "$t" ] || field type "$t"
   h="$h}"
-  ask file "$abs" "$abs"
+  ask "$abs" "$abs"
   if [ "$mode" = -d ]; then
     say "downloaded $abs"
     return
@@ -257,7 +252,11 @@ fetch() {
   mime "$name"
   [ -z "$t" ] || field type "$t"
   h="$h}"
-  ask curl "$1" "$1"
+  dl=$(mktemp /tmp/open-XXXXXXXX) || exit 1
+  trap 'rm -f -- "$dl"' EXIT
+  err=$(curl -fsSL -- "$1" 2>&1 >"$dl") || die "$1: ${err##*"$nl"}"
+  ask "$dl" "$1"
+  rm -f -- "$dl"
   say "downloaded $1"
 }
 flag() {
@@ -484,16 +483,11 @@ if [ "$mode" = -f ]; then
 fi
 for item; do
   target=${item#?}
-  case $item in
-    u*) open_url "$target" ;;
-    *)
-      if ! isurl "$target"; then
-        open_path "$target"
-      elif [ "$mode" = -d ]; then
-        fetch "$target"
-      else
-        open_url "$target"
-      fi
-      ;;
-  esac
+  if [ "$item" = "t$target" ] && ! isurl "$target"; then
+    open_path "$target"
+  elif [ "$mode" = -d ]; then
+    fetch "$target"
+  else
+    open_url "$target"
+  fi
 done

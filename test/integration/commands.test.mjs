@@ -57,7 +57,7 @@ const WEBP = Buffer.concat([
 ]);
 const curl = `#!/bin/sh
 case $3 in
-  *missing*) echo 'curl: (22) The requested URL returned error: 404' >&2; exit 22 ;;
+  *missing*) printf partial; echo 'curl: (22) The requested URL returned error: 404' >&2; exit 22 ;;
 esac
 printf 'fetched %s|%s|%s' "$1" "$2" "$3"
 `;
@@ -244,10 +244,43 @@ describe('in a kernel with a page', () => {
       stdout: '',
       stderr: 'open: -d with a URL needs curl on PATH\n',
     });
-    assert.equal(page.calls.length, page.calls.filter((c) => c.kind === 'open.download').length);
+    assert.deepEqual(calls(), []);
+    const left = (await os.sh('ls /tmp')).stdout.split('\n');
+    assert.deepEqual(
+      left.filter((name) => /^open-[A-Za-z0-9]+$/.test(name)),
+      []
+    );
   });
 
-  it('asks open.reveal for -R with the absolute path, and reports ENOTSUP', async () => {
+  it('downloads a -u URL under -d, from a fetch that finished first', async () => {
+    const result = await os.sh('PATH=/tmp/fake:$PATH open -d -u https://a.example/r.pdf');
+    assert.deepEqual(result, {
+      status: 0,
+      stdout: 'downloaded https://a.example/r.pdf\n',
+      stderr: '',
+    });
+    assert.deepEqual(calls(), [
+      {
+        kind: 'open.download',
+        options: { name: 'r.pdf', type: 'application/pdf' },
+        body: 'fetched -fsSL|--|https://a.example/r.pdf',
+      },
+    ]);
+  });
+
+  it('asks open.reveal for -R with the absolute path, a directory too, and reports ENOTSUP', async () => {
+    await os.sh('mkdir -p /tmp/shown.d');
+    assert.deepEqual(await run(['open', '-R', 'shown.d']), {
+      status: 1,
+      stdout: '',
+      stderr: 'open: /tmp/shown.d: this embedder does not answer open.reveal\n',
+    });
+    assert.deepEqual(await run(['open', '-R', 'gone.d']), {
+      status: 1,
+      stdout: '',
+      stderr: 'open: gone.d: No such file or directory\n',
+    });
+    page.calls = [];
     await os.sh('printf r > /tmp/shown.txt');
     assert.deepEqual(await run(['open', '-R', 'shown.txt']), {
       status: 1,
