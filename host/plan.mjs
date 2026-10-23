@@ -48,7 +48,11 @@ function combine(parsed, where) {
   const { options, targets } = parsed;
   const modes = ['-e', '-t', '-f'].filter((name) => has(options, name));
   if (modes.length > 1) return `${modes.join(' and ')} can't be given together`;
-  if (has(options, '-f') && targets.length > 0) return '-f takes no targets';
+  const notUrl = options.find((option) => option.name === '-u' && !isUrl(option.value));
+  if (notUrl) return `-u needs a URL, not ${notUrl.value}`;
+  if (has(options, '-f') && (targets.length > 0 || has(options, '-u'))) {
+    return '-f takes no targets';
+  }
   const given = ['-a', '-b', '-u', '-f'].some((name) => has(options, name));
   if (!given && targets.length === 0) return 'no target';
   if (where === 'macOS') return undefined;

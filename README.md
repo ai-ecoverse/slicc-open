@@ -97,6 +97,7 @@ The exit status is the same for every command: **0** when everything opened, **1
 - **Unsupported on Windows:** `-b`, `-F`, `-g`, `-s`, `--arch`, `-d`, `-v`, `--size`; `-n`, `--args`, `--stdin`, `--stdout` and `--stderr` without `-a`.
 - **On Linux and Windows,** `-R` takes paths only, and no `-a`, `-e`, `-t` or `-f`; `-a` takes no `-e` or `-t`. These are usage errors.
 - **`--size`** takes `low` (256x256), `medium` (768x768), `high` (1536x1536) or `WxH` (for example `512x512`), as in slicc 6. The image is fit inside the box with its aspect ratio kept, and never scaled up. `-v` without `--size` inlines nothing: it prints the image's native size, its bytes and type, and the `--size` choices to stderr, and exits 1, so one unbounded image can't fill the agent's context. `--size` without `-v` is a usage error.
+- `-u` takes a URL (a scheme of two or more characters and a colon); anything else is a usage error, and with `-f` it counts as a target.
 - `-d` and `-v` work on paths only; with a URL they are a usage error. Of `-d`, `-v`, `-e`, `-t` and `-f`, at most one may be given, and `-f` takes no targets.
 
 ### `xdg-open`

@@ -380,6 +380,10 @@ describe('install.ps1', () => {
     assert.match(text, /SCOPEN_INSTALL_DIR/);
     assert.doesNotMatch(text, /Invoke-Expression|\biex\b|cmd(\.exe)? \/c|Start-Process/i);
     assert.doesNotMatch(text, /^\s*exit\b/m);
+    assert.match(
+      text,
+      /'\(',\n\s+"`"\$\(& \$escape \$Node\)`" `"\$\(& \$escape \$Entry\)`" %\*",\n\s+'call :done %%ERRORLEVEL%%',\n\s+'exit \/b',\n\s+'\)',/
+    );
   });
 
   const pwsh = ['pwsh', 'pwsh.exe'].find(
@@ -428,7 +432,13 @@ describe('install.ps1', () => {
       const entry = join(local, 'slicc-open', version, 'host', 'scopen.mjs');
       assert.ok(existsSync(entry));
       const cmd = readFileSync(join(bin, 'scopen.cmd'), 'utf8');
-      assert.ok(cmd.includes(`"${entry}" %*`), cmd);
+      const lines = cmd.split('\r\n');
+      const at = lines.findIndex((line) => line.endsWith(` "${entry}" %*`));
+      assert.deepEqual(
+        lines.slice(at - 1, at + 4),
+        ['(', lines[at], 'call :done %%ERRORLEVEL%%', 'exit /b', ')'],
+        cmd
+      );
       const launched = await run(
         pwsh,
         ['-NoProfile', '-File', join(bin, 'scopen.ps1'), '--version'],

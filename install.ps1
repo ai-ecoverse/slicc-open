@@ -181,10 +181,14 @@ try {
       'for /f "tokens=2 delims=:." %%c in (''chcp'') do set "SCOPEN_CP=%%c"',
       'chcp 65001 >nul',
       "set `"SCOPEN_INSTALL_DIR=$(& $escape $Dir)`"",
+      '(',
       "`"$(& $escape $Node)`" `"$(& $escape $Entry)`" %*",
-      'set "SCOPEN_STATUS=%ERRORLEVEL%"',
+      'call :done %%ERRORLEVEL%%',
+      'exit /b',
+      ')',
+      ':done',
       'chcp %SCOPEN_CP% >nul',
-      'exit /b %SCOPEN_STATUS%',
+      'exit /b %1',
       ''
     ) -join "`r`n"
     [System.IO.File]::WriteAllText($Cmd, $cmdLines, (New-Object System.Text.UTF8Encoding $false))

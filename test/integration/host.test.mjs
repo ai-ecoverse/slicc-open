@@ -744,6 +744,9 @@ describe('scopen options', () => {
       [['-W'], 'no target'],
       [['-e', '-t', 'notes.txt'], "-e and -t can't be given together"],
       [['-f', 'notes.txt'], '-f takes no targets'],
+      [['-f', '-u', 'https://example.com'], '-f takes no targets'],
+      [['-u', '-x'], '-u needs a URL, not -x'],
+      [['-u', 'notes.txt'], '-u needs a URL, not notes.txt'],
     ]) {
       const result = await scopen({ platform: 'darwin', argv });
       assert.equal(result.code, 2, argv.join(' '));
