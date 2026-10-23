@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  actions: read
+  issues: write
+  pull-requests: write
+  statuses: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ci:
+    uses: ai-ecoverse/slicc-shared-web/.github/workflows/pipeline.yml@v2.11.3
+    secrets: inherit
+    with:
+      test-glob: test/integration/*.test.mjs
+      review-prompt: |
+        SLICC-OPEN
+
+        This repository is slicc-open (`@ai-ecoverse/slicc-open`): `open`, `xdg-open` and `scopen` for SLICC, declared in `slicc.commands`, which open URLs and OPFS files in a browser tab, download files and return images inline to the agent, and `scopen` for ordinary hosts as Node in `host/`, which hands off to `open` on macOS, `xdg-open` (else `gio open`) on Linux and PowerShell `Start-Process` on Windows. The README is the contract: read the sections the change touches first. `git diff origin/main...HEAD`, or `$RUNNER_TEMP/review/context/pr.diff`, is the change.
+
+        Look for real defects, in this order:
+        1. Correctness: each command accepts exactly the options the README lists for it, rejects the unsupported ones on stderr with exit 2, and exits 0 on success, 1 when the tool fails or is not found, 2 on a usage error; `host/` runs the tool and the argv the README names for each platform, with file targets as absolute paths; `--upgrade` prints what the README says.
+        2. Security: no URL, path or option value reaches a shell or is spliced into a script: no `shell: true`, no `cmd /c start`, no `cmd.exe`, and the PowerShell script is a constant that reads its targets from the environment, never from interpolated text, so nothing can inject through `Start-Process`; a target cannot be read as an option by the tool it is passed to.
+        3. Tests: every behaviour change has an integration test in `test/integration/`, host tests use fake tools on `PATH`, and a fix's test fails without the fix.
+        4. Repo rules: no comments anywhere (YAML too), no `.md` files besides README.md and AGENTS.md, no unit tests in git, and a conventional-commit title (`fix`, `feat` and `perf` release, the rest don't).

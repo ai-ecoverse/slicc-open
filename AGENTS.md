@@ -1,0 +1,3 @@
+# slicc-open
+
+`@ai-ecoverse/slicc-open`: `open`, `xdg-open` and `scopen` for SLICC, declared in `slicc.commands`, and `scopen` for hosts as Node in `host/`. README.md is the spec. No comments in any file. No CLAUDE.md. Host commands run the platform's tool with a fixed argv and no shell. Unit tests live in the gitignored `test/unit/` (`npm run test:unit` writes coverage to `coverage/unit/lcov.info`; the pre-commit hook wants 100% of changed lines); committed tests in `test/integration/`. Host tests use fake tools on `PATH`; only CI opens anything for real. CI is `ci.yml` on slicc-shared-web's pipeline. `npm run lint` and `npm test` must pass. Never use ports 9222-9229. Releases come from `main` via semantic-release; never move or delete a pushed tag.
