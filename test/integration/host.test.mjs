@@ -19,13 +19,16 @@ import { after, before, describe, it } from 'node:test';
 import { run } from '../../host/main.mjs';
 import { usage } from '../../host/options.mjs';
 import { windowsCommandLine, windowsScript } from '../../host/windows.mjs';
+import { fakeExe } from './fake-windows.mjs';
 
 const root = resolve(import.meta.dirname, '../..');
 const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
 const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'slicc-open-host-')));
+const onWindows = process.platform === 'win32';
+const posix = { skip: onWindows && 'needs POSIX fakes' };
 const hostile = 'https://example.com/a?b=$(touch PWNED)&c=`touch PWNED`;rm -rf x|y\'"%PATH%';
 
-after(() => rmSync(scratch, { recursive: true, force: true }));
+after(() => rmSync(scratch, { recursive: true, force: true, maxRetries: 20 }));
 
 function fake(name) {
   return `#!${process.execPath}
@@ -33,7 +36,7 @@ const fs = require('node:fs');
 const argv = process.argv.slice(2);
 const record = { name: ${JSON.stringify(name)}, argv, cwd: process.cwd() };
 record.env = {};
-for (const key of ['SCOPEN_ARGV', 'SCOPEN_INSTALL_DIR', 'FAKE_A', 'FAKE_KEPT']) record.env[key] = process.env[key];
+for (const key of ['SCOPEN_ARGV', 'SCOPEN_INSTALL_DIR', 'FAKE_A', 'FAKE_KEPT', 'PSModulePath']) record.env[key] = process.env[key];
 for (const arg of argv) {
   try {
     if (fs.statSync(arg).isFile()) record.file = fs.readFileSync(arg, 'utf8');
@@ -54,6 +57,10 @@ if (process.env.FAKE_QUIET === ${JSON.stringify(name)}) process.exit(4);
 function tools(names) {
   const dir = mkdtempSync(join(scratch, 'bin-'));
   for (const name of names) {
+    if (onWindows) {
+      fakeExe(dir, name, fake(name));
+      continue;
+    }
     writeFileSync(join(dir, name), fake(name));
     chmodSync(join(dir, name), 0o755);
   }
@@ -64,9 +71,13 @@ function base() {
   const env = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (
-      !['PATH', 'SCOPEN_INSTALL_DIR', 'SLICC_INSTALL_BASE_URL', 'NODE_OPTIONS'].includes(
-        key.toUpperCase()
-      )
+      ![
+        'PATH',
+        'SCOPEN_INSTALL_DIR',
+        'SLICC_INSTALL_BASE_URL',
+        'NODE_OPTIONS',
+        'PSMODULEPATH',
+      ].includes(key.toUpperCase())
     ) {
       env[key] = value;
     }
@@ -146,7 +157,7 @@ function pwned(dir) {
   return existsSync(join(dir, 'PWNED')) || existsSync(join(root, 'PWNED'));
 }
 
-describe('scopen on macOS', () => {
+describe('scopen on macOS', posix, () => {
   it('runs open once with every target, files as absolute paths and URLs unchanged', async () => {
     const result = await scopen({
       platform: 'darwin',
@@ -324,7 +335,7 @@ describe('scopen on macOS', () => {
   });
 });
 
-describe('scopen on Linux', () => {
+describe('scopen on Linux', posix, () => {
   it('runs xdg-open once per target, in order', async () => {
     const result = await scopen({
       platform: 'linux',
@@ -642,7 +653,7 @@ describe('scopen on Windows', () => {
 
 describe('scopen never hands a target to a shell', () => {
   it('passes a hostile URL and file name through unchanged on every platform', async () => {
-    for (const platform of ['darwin', 'linux', 'win32']) {
+    for (const platform of onWindows ? ['win32'] : ['darwin', 'linux', 'win32']) {
       const cwd = workdir();
       const file = "it's $(touch PWNED) `x`.txt";
       const result = await scopen({ platform, cwd, argv: [hostile, file] });
@@ -664,62 +675,66 @@ describe('scopen never hands a target to a shell', () => {
     assert.doesNotMatch(windowsScript, /Invoke-Expression|iex|cmd/i);
   });
 
-  const pwsh = ['pwsh', 'pwsh.exe', 'powershell.exe'].find(
+  const shells = ['pwsh', 'powershell.exe'].filter(
     (name) => spawnSync(name, ['-NoProfile', '-Command', 'exit 0']).status === 0
   );
-  it('binds SCOPEN_ARGV to Start-Process in a real PowerShell', { skip: !pwsh }, () => {
-    const stub = [
-      'function Start-Process {',
-      '  param($FilePath, $ArgumentList, [switch]$Wait, $WindowStyle, $RedirectStandardInput, $RedirectStandardOutput, $RedirectStandardError, [switch]$PassThru)',
-      '  [Console]::Out.WriteLine((ConvertTo-Json -Compress @{ FilePath = $FilePath; ArgumentList = $ArgumentList; Wait = [bool]$Wait; WindowStyle = $WindowStyle; In = $RedirectStandardInput; PassThru = [bool]$PassThru }))',
-      '}',
-      '',
-    ].join('\n');
-    const items = [
-      { FilePath: hostile },
-      {
-        FilePath: 'app.exe',
-        ArgumentList: windowsCommandLine(['a b', 'c"d']),
-        Wait: true,
-        WindowStyle: 'Hidden',
-        RedirectStandardInput: '/in',
-      },
-    ];
-    const cwd = workdir();
-    const result = spawnSync(
-      pwsh,
-      ['-NoProfile', '-NonInteractive', '-Command', stub + windowsScript],
-      {
-        cwd,
-        env: { ...process.env, SCOPEN_ARGV: JSON.stringify(items) },
-        encoding: 'utf8',
-      }
-    );
-    assert.equal(result.status, 0, result.stderr);
-    const seen = result.stdout
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line));
-    assert.deepEqual(seen, [
-      {
-        FilePath: hostile,
-        ArgumentList: null,
-        Wait: false,
-        WindowStyle: null,
-        In: null,
-        PassThru: false,
-      },
-      {
-        FilePath: 'app.exe',
-        ArgumentList: '"a b" "c\\"d"',
-        Wait: true,
-        WindowStyle: 'Hidden',
-        In: '/in',
-        PassThru: true,
-      },
-    ]);
-    assert.equal(pwned(cwd), false);
-  });
+  for (const pwsh of shells.length > 0 ? shells : ['pwsh']) {
+    it(`binds SCOPEN_ARGV to Start-Process in a real ${pwsh}`, {
+      skip: shells.length === 0,
+    }, () => {
+      const stub = [
+        'function Start-Process {',
+        '  param($FilePath, $ArgumentList, [switch]$Wait, $WindowStyle, $RedirectStandardInput, $RedirectStandardOutput, $RedirectStandardError, [switch]$PassThru)',
+        '  [Console]::Out.WriteLine((ConvertTo-Json -Compress @{ FilePath = $FilePath; ArgumentList = $ArgumentList; Wait = [bool]$Wait; WindowStyle = $WindowStyle; In = $RedirectStandardInput; PassThru = [bool]$PassThru }))',
+        '}',
+        '',
+      ].join('\n');
+      const items = [
+        { FilePath: hostile },
+        {
+          FilePath: 'app.exe',
+          ArgumentList: windowsCommandLine(['a b', 'c"d']),
+          Wait: true,
+          WindowStyle: 'Hidden',
+          RedirectStandardInput: '/in',
+        },
+      ];
+      const cwd = workdir();
+      const result = spawnSync(
+        pwsh,
+        ['-NoProfile', '-NonInteractive', '-Command', stub + windowsScript],
+        {
+          cwd,
+          env: { ...process.env, SCOPEN_ARGV: JSON.stringify(items) },
+          encoding: 'utf8',
+        }
+      );
+      assert.equal(result.status, 0, result.stderr);
+      const seen = result.stdout
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      assert.deepEqual(seen, [
+        {
+          FilePath: hostile,
+          ArgumentList: null,
+          Wait: false,
+          WindowStyle: null,
+          In: null,
+          PassThru: false,
+        },
+        {
+          FilePath: 'app.exe',
+          ArgumentList: '"a b" "c\\"d"',
+          Wait: true,
+          WindowStyle: 'Hidden',
+          In: '/in',
+          PassThru: true,
+        },
+      ]);
+      assert.equal(pwned(cwd), false);
+    });
+  }
 });
 
 describe('scopen options', () => {
@@ -768,7 +783,7 @@ describe('scopen options', () => {
     }
   });
 
-  it('reads an option after the first target as a target', async () => {
+  it('reads an option after the first target as a target', posix, async () => {
     const result = await scopen({ platform: 'darwin', argv: ['notes.txt', '-W'] });
     assert.equal(result.code, 1);
     assert.equal(result.stderr, 'scopen: -W: No such file or directory\n');
@@ -823,7 +838,7 @@ describe('scopen --upgrade', () => {
     );
   });
 
-  it('runs the latest install.sh with --dir and prints old → new', async () => {
+  it('runs the latest install.sh with --dir and prints old → new', posix, async () => {
     const log = join(mkdtempSync(join(scratch, 'up-')), 'args');
     const at = installer(
       `printf '%s\\n' "$@" "\${SCOPEN_INSTALL_DIR:-unset}" > '${log}'\necho progress >&2\necho 'scopen 99.1.0 installed to /x/scopen'`
@@ -842,7 +857,7 @@ describe('scopen --upgrade', () => {
     assert.deepEqual(readFileSync(log, 'utf8').split('\n'), ['--dir', '/opt/my bin', 'unset', '']);
   });
 
-  it('says when it is already up to date', async () => {
+  it('says when it is already up to date', posix, async () => {
     const at = installer(`echo 'scopen ${version} installed to /x/scopen'`);
     const result = await scopen({
       platform: 'darwin',
@@ -855,7 +870,7 @@ describe('scopen --upgrade', () => {
     );
   });
 
-  it('passes a failing installer stderr through and exits 1', async () => {
+  it('passes a failing installer stderr through and exits 1', posix, async () => {
     for (const [body, stderr] of [
       ['echo broken >&2; exit 5', 'broken\n'],
       ['echo nothing useful', 'scopen: install.sh did not say which version it installed\n'],
@@ -952,6 +967,7 @@ describe('scopen --upgrade', () => {
         SCOPEN_INSTALL_DIR: 'C:\\Users\\me\\bin',
         SLICC_INSTALL_BASE_URL: `${url}/win`,
         FAKE_INSTALLED: '99.2.0',
+        PSModulePath: 'C:\\Program Files\\PowerShell\\7\\Modules',
       },
     });
     assert.equal(result.code, 0, result.stderr);
@@ -969,6 +985,7 @@ describe('scopen --upgrade', () => {
     assert.deepEqual(call.argv.slice(6), ['-Dir', 'C:\\Users\\me\\bin']);
     assert.equal(call.file, 'param($Dir)');
     assert.equal(call.env.SCOPEN_INSTALL_DIR, undefined);
+    assert.equal(call.env.PSModulePath, undefined);
     const none = await scopen({
       platform: 'win32',
       argv: ['--upgrade'],
