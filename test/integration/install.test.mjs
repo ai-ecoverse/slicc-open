@@ -31,12 +31,13 @@ function which(name) {
   return found.status === 0 ? found.stdout.trim() : undefined;
 }
 
-function release(at, as = version) {
+function release(at, as = version, patch = () => {}) {
   const dir = mkdtempSync(join(scratch, `release-${as}-`));
   const source = mkdtempSync(join(scratch, 'source-'));
   for (const name of ['LICENSE', 'README.md', 'package.json', 'host']) {
     cpSync(join(root, name), join(source, name), { recursive: true });
   }
+  patch(source);
   const pkg = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8'));
   pkg.version = as;
   delete pkg.scripts;
@@ -154,6 +155,23 @@ describe('install.sh', { skip: !curl && 'curl is not installed' }, () => {
     });
     assert.equal(missing.status, 1);
     assert.match(missing.stderr, /could not download .*slicc-open-0\.0\.0-nope\.tgz/);
+  });
+
+  it('installs an older release whose --version still printed the command name', async () => {
+    const old = release(undefined, '0.9.0', (source) => {
+      const main = join(source, 'host/main.mjs');
+      writeFileSync(
+        main,
+        readFileSync(main, 'utf8').replace('`${version()}\\n`', '`scopen ${version()}\\n`')
+      );
+    });
+    const h = home();
+    const result = await run('sh', [installSh, '--version', '0.9.0', '--dir', join(h, 'bin')], {
+      env: env({ HOME: h, SLICC_INSTALL_BASE_URL: pathToFileURL(old).href }),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const reported = await run(join(h, 'bin', 'scopen'), ['--version'], { env: env({}) });
+    assert.equal(reported.stdout, 'scopen 0.9.0\n');
   });
 
   it('writes a launcher that survives a hostile --dir', async () => {
@@ -380,10 +398,8 @@ describe('install.ps1', () => {
     assert.match(text, /SCOPEN_INSTALL_DIR/);
     assert.doesNotMatch(text, /Invoke-Expression|\biex\b|cmd(\.exe)? \/c|Start-Process/i);
     assert.doesNotMatch(text, /^\s*exit\b/m);
-    assert.match(
-      text,
-      /'\(',\n\s+"`"\$\(& \$escape \$Node\)`" `"\$\(& \$escape \$Entry\)`" %\*",\n\s+'call :done %%ERRORLEVEL%%',\n\s+'exit \/b',\n\s+'\)',/
-    );
+    assert.ok(text.includes('`" %* & call :done %%ERRORLEVEL%% & exit /b",\n'));
+    assert.doesNotMatch(text, /^\s+'\(',$/m);
   });
 
   const pwsh = ['pwsh', 'pwsh.exe'].find(
@@ -433,10 +449,12 @@ describe('install.ps1', () => {
       assert.ok(existsSync(entry));
       const cmd = readFileSync(join(bin, 'scopen.cmd'), 'utf8');
       const lines = cmd.split('\r\n');
-      const at = lines.findIndex((line) => line.endsWith(` "${entry}" %*`));
+      const at = lines.findIndex((line) =>
+        line.endsWith(` "${entry}" %* & call :done %%ERRORLEVEL%% & exit /b`)
+      );
       assert.deepEqual(
-        lines.slice(at - 1, at + 4),
-        ['(', lines[at], 'call :done %%ERRORLEVEL%%', 'exit /b', ')'],
+        lines.slice(at, at + 5),
+        [lines[at], ':done', 'chcp %SCOPEN_CP% >nul', 'exit /b %1', ''],
         cmd
       );
       const launched = await run(
