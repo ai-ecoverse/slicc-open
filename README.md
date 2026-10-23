@@ -2,7 +2,7 @@
 
 `open` and `xdg-open` for SLICC: they open URLs and files from SLICC's file system in a browser tab, download files, and show images inline to the agent. `scopen` is the same command under a name that never clashes: in SLICC it is `open`, and on macOS, Linux and Windows it hands off to the platform's own opener (see [On a host](#on-a-host)).
 
-This README is the spec. The host command is described as it will ship in the first release; the SLICC side is **planned**, waiting on the kernel-to-page bridge (see [In SLICC](#in-slicc)).
+This README is the spec. In SLICC the commands are POSIX sh scripts that ask seven's page through the kernel's `/dev/embedder` (see [In SLICC](#in-slicc)); on a host, `scopen` is a small Node script.
 
 ## Install
 
@@ -45,7 +45,7 @@ or without installing, `npx -p @ai-ecoverse/slicc-open scopen https://example.co
 
 | command | in SLICC | on a host | options |
 | --- | --- | --- | --- |
-| `open` | opens in the browser | not installed | macOS `open(1)`'s, and slicc 6's `-d`, `-v`, `--size` |
+| `open` | opens in the browser | not installed | macOS `open(1)`'s, and slicc 6's `-d` and `-v` |
 | `xdg-open` | opens in the browser | not installed | `xdg-open(1)`'s |
 | `scopen` | the same as `open` | the platform's opener | the same as `open` |
 
@@ -57,7 +57,7 @@ The exit status is the same for every command: **0** when everything opened, **1
 
 | option | in SLICC | macOS | Linux | Windows |
 | --- | --- | --- | --- | --- |
-| *target* | URL: a new tab; path: the file in a tab, through seven's service worker | `open` | `xdg-open` | `Start-Process` |
+| *target* | URL: a new tab; path: the file in a tab, from a one-off sandboxed URL | `open` | `xdg-open` | `Start-Process` |
 | `-a APP` | unsupported | `open -a APP` | runs `APP` from `PATH` with the targets as its arguments | `Start-Process -FilePath APP -ArgumentList` *targets* |
 | `-b BUNDLE_ID` | unsupported | `open -b` | unsupported | unsupported |
 | `-e` | the file as plain text in a tab | `open -e` (TextEdit) | unsupported | Notepad |
@@ -65,7 +65,7 @@ The exit status is the same for every command: **0** when everything opened, **1
 | `-f` | stdin, saved to `/tmp/open-<random>.txt`, as plain text in a tab | `open -f` | stdin, saved to a temporary `.txt` file, opened with `xdg-open` | stdin, saved to a temporary `.txt` file, opened in Notepad |
 | `-F` | unsupported | `open -F` | unsupported | unsupported |
 | `-W` | unsupported | `open -W` | with `-a`, waits for `APP` to exit; without `-a`, unsupported | `Start-Process -Wait` |
-| `-R` | unsupported | `open -R` (reveals in Finder) | `xdg-open` on the file's directory | `explorer.exe /select,<path>` |
+| `-R` | asks the page to reveal the file (`open.reveal`) | `open -R` (reveals in Finder) | `xdg-open` on the file's directory | `explorer.exe /select,<path>` |
 | `-n` | accepted; every target already gets a new tab | `open -n` | with `-a`, accepted (a new process is always started); without `-a`, unsupported | with `-a`, accepted (a new process is always started); without `-a`, unsupported |
 | `-g` | the tab opens without taking focus | `open -g` | unsupported | unsupported |
 | `-j` | unsupported | `open -j` | unsupported | `Start-Process -WindowStyle Hidden` |
@@ -77,22 +77,22 @@ The exit status is the same for every command: **0** when everything opened, **1
 | `--stdout PATH` | unsupported | `open --stdout` | with `-a`, `APP`'s stdout; without `-a`, unsupported | with `-a`, `-RedirectStandardOutput`; without `-a`, unsupported |
 | `--stderr PATH` | unsupported | `open --stderr` | with `-a`, `APP`'s stderr; without `-a`, unsupported | with `-a`, `-RedirectStandardError`; without `-a`, unsupported |
 | `--arch ARCH` | unsupported | `open --arch` | unsupported | unsupported |
-| `-d`, `--download` | downloads the file through the page | unsupported | unsupported | unsupported |
-| `-v`, `--view` | returns the image inline to the agent | unsupported | unsupported | unsupported |
-| `--size SPEC` | with `-v`, the box the image is fit into | unsupported | unsupported | unsupported |
+| `-d`, `--download` | downloads the file, or an http or https URL fetched with `curl`, through the page | unsupported | unsupported | unsupported |
+| `-v`, `--view` | prints `<img:PATH>` for the agent to show the image inline | unsupported | unsupported | unsupported |
+| `--size SPEC` | unsupported | unsupported | unsupported | unsupported |
 | `-h`, `--help` | the usage, to stdout, exit 0 | the same | the same | the same |
 | `--version` | the version alone (`1.2.0`), to stdout, exit 0 | the same | the same | the same |
 | `--upgrade` | see [`--upgrade`](#--upgrade) | the same | the same | the same |
 
 - **Unsupported, everywhere:** `-s` (macOS `open`'s SDK for header search) and header search itself, because `-h` is help in every slicc-open command; `scopen -h NSView` prints the usage.
-- **Unsupported in SLICC:** `-a`, `-b`, `-F`, `-W`, `-R`, `-j`, `-s`, `--args`, `--env`, `--stdin`, `--stdout`, `--stderr`, `--arch`. SLICC has one browser and no applications to choose, wait for or start fresh.
+- **Unsupported in SLICC:** `-a`, `-b`, `-F`, `-W`, `-j`, `-s`, `--args`, `--env`, `--stdin`, `--stdout`, `--stderr`, `--arch`, `--size`. SLICC has one browser and no applications to choose, wait for or start fresh.
 - **Unsupported on macOS:** `-s`, `-d`, `-v`, `--size`. Every other option goes to `open` unchanged, except `-h`, `--help`, `--version` and `--upgrade`, which `scopen` answers itself, and `--`, which it doesn't pass on.
 - **Unsupported on Linux:** `-b`, `-e`, `-t`, `-F`, `-g`, `-j`, `-s`, `--arch`, `-d`, `-v`, `--size`; `-W`, `-n`, `--args`, `--stdin`, `--stdout` and `--stderr` without `-a`.
 - **Unsupported on Windows:** `-b`, `-F`, `-g`, `-s`, `--arch`, `-d`, `-v`, `--size`; `-n`, `--args`, `--stdin`, `--stdout` and `--stderr` without `-a`.
 - **On Linux and Windows,** `-R` takes paths only, and no `-a`, `-e`, `-t` or `-f`; `-a` takes no `-e` or `-t`. These are usage errors.
-- **`--size`** takes `low` (256x256), `medium` (768x768), `high` (1536x1536) or `WxH` (for example `512x512`), as in slicc 6. The image is fit inside the box with its aspect ratio kept, and never scaled up. `-v` without `--size` inlines nothing: it prints the image's native size, its bytes and type, and the `--size` choices to stderr, and exits 1, so one unbounded image can't fill the agent's context. `--size` without `-v` is a usage error.
+- **`--size`** was slicc 6's box for `-v`. It is unsupported everywhere, because seven's agent fits every inline image itself (see [In SLICC](#in-slicc)), and is still parsed (with its value) so that it gives that message rather than an unknown option.
 - `-u` takes a URL (a scheme of two or more characters and a colon); anything else is a usage error, and with `-f` it counts as a target.
-- `-d` and `-v` work on paths only; with a URL they are a usage error. Of `-d`, `-v`, `-e`, `-t` and `-f`, at most one may be given, and `-f` takes no targets.
+- `-v` works on paths only, and `-d` on paths and `http:` or `https:` URLs; any other target is a usage error. Of `-d`, `-v`, `-e`, `-t` and `-f`, at most one may be given, and `-f` takes no targets. In SLICC, `-R`, `-e` and `-t` take paths only, and `-R` counts as one of those five.
 
 ### `xdg-open`
 
@@ -112,16 +112,32 @@ The exit status is the same for every command: **0** when everything opened, **1
 
 ## In SLICC
 
-The commands run in the slicc-kernel, while tabs, downloads and the service worker belong to seven's page, the kernel's embedder. How the kernel reaches the page is being agreed, once for slicc-open, slicc-capture and slicc-audio, in a slicc-kernel issue; [slicc-clipboard](https://github.com/ai-ecoverse/slicc-clipboard) did it with a character device answered by the embedder's hook. Until that lands, everything in this section is **planned**, and this README will name the bridge when it is settled.
+The commands run in the slicc-kernel, while tabs and downloads belong to seven's page, the kernel's embedder. They reach it through `/dev/embedder` (slicc-kernel 1.153.0 and later), as POSIX sh over coreutils, so every error comes from a real `cat` with the kernel's errno: one request is a JSON header line `{"kind": …, …options}`, then the body, then the page's reply until EOF. The package's `engines` asks for `slicc-kernel >=1.153.0`, so an older kernel refuses to install its commands; one without the device anyway prints `<cmd>: /dev/embedder not available (needs slicc-kernel >= 1.153.0)` and exits 1, before reading any target.
 
-- **URLs** (planned) open in a new tab through seven's page. A tab opened without a user gesture may be blocked; then the page asks the user to allow it, and `open` waits for the answer. A refusal prints `open: the user did not allow opening <url>` and exits 1. `-g` opens the tab without moving focus to it.
-- **Files** (planned) from the file system (OPFS and the other mounts) open in a new tab, served through seven's service worker with the type their name implies; `-e` and `-t` serve them as `text/plain`. A directory opens its listing, or its index page.
-- **Project root:** a page's root-absolute links (`/styles/styles.css` in `index.html`) resolve against the file's project root, as in slicc 6: the nearest directory, from the file's own directory upward (from the directory itself when the target is one), that has a `head.html`, `fstab.yaml`, `package.json` or `.git`, in that order; with none, the file's own directory.
-- **`-d`, `--download`** (planned) saves the file to the user's machine through the page, under its own name, and prints `downloaded <path>`.
-- **`-v`, `--view`** (planned) decodes the image, fits it into the `--size` box, and puts it inline in the agent's tool result, after a line with the path, the native and the new size, the bytes and the type. The marker that carries the image is being agreed with slicc-agent.
-- **Followers** (planned): on a follower, `open` opens the tab, starts the download or reads the file in that follower's browser, not the leader's.
-- For each target, `open` prints one line to stdout: `opened <url>`, or `opened <path> → <preview url>`.
-- When the kernel has no bridge to a page (seven not running, or a kernel too old), every command except `-h`, `--help`, `--version` and `--upgrade` prints `open: no page to open in` and exits 1, before reading any target.
+- **URLs** open in a new tab. `open` writes an `open.url` request and closes the device (`O_WRONLY`), and the page's answer is the close's errno. `-g` asks for the tab without moving focus to it. seven opens only `http:` and `https:` URLs that aren't its own pages or the vault, and asks the user before it opens one; a refusal, a dismissed prompt, or 60 s without an answer is `EACCES`.
+- **Files** are read by the command itself, with the caller's permissions: `open` checks each one first (`open: notes.txt: No such file or directory`, `Permission denied`, `Is a directory`, from coreutils), resolves it with `realpath` against the working directory, and sends its bytes as the body of `open.file`, with its name and the type its extension implies (`-e`, `-t` and `-f` send `text/plain`). The page serves them from a one-off sandboxed URL in a new tab, and replies with that URL. The file is served alone: its links to other files, relative or root-absolute, don't reach the file system.
+- **`-f`** saves stdin to `/tmp/open-<random>.txt` and opens that file as plain text.
+- **`-d`, `--download`** sends a file's bytes as `open.download`, and the page saves them to the user's machine under the file's name. With an `http:` or `https:` URL, `open` fetches it with `curl -fsSL` (a missing `curl` is `open: -d with a URL needs curl on PATH`, exit 1, before anything is sent; a failing one passes its last line on, exit 1) and streams the bytes the same way, named after the URL's last path segment (`download` when it has none).
+- **`-R`** sends `open.reveal` with the absolute path.
+- **`-v`, `--view`** needs no page. For each path it checks that the file is readable and a PNG, JPEG, GIF or WebP image by its magic bytes (otherwise `open: <path>: not a PNG, JPEG, GIF or WebP image`, exit 1, before anything is printed), then prints one line `<img:/absolute/path>` to stdout, with the path resolved by `realpath`. A seven agent with [slicc-agent#713](https://github.com/ai-ecoverse/slicc-agent/issues/713) turns each such line into an inline image in the tool result (at most 4 per command, fit to 1600 px); anywhere else the line is shown as it is.
+- **Followers:** each request goes to the page of the session the command runs in, so on a follower the tab opens and the download starts in that follower's browser. A session no page answers for is `ENOTSUP`, `no page answers requests for this session`.
+- For each target, `open` prints one line to stdout: `opened <url>`, `opened <path> → <url>`, `downloaded <path or url>`, or `revealed <path>`.
+- **Errors:** a request the page refuses prints `<cmd>: <target>: <the first line of the page's message>` (or the errno's text when there is none) and exits 1; `EACCES` adds `<cmd>: if seven asked, answer in seven's tab (a click allows it), then run <cmd> again`. The page's progress lines are not shown.
+
+### The embedder contract
+
+The kinds below are what the embedder answers; slicc-open's tests run the scripts against a fake page that answers them in a node kernel.
+
+| kind | options | body | reply | errors |
+| --- | --- | --- | --- | --- |
+| `open.url` | `url`, `background` (`true` with `-g`; seven ignores it) | none, `O_WRONLY` | none | `EACCES`: `that isn't a URL`, `seven opens only http and https URLs`, `seven doesn't open its own pages or the vault for a program`, `the request to open the page was dismissed`, `nobody answered the request to open the page within 60 s` |
+| `open.file` | `name`, `type` (when the extension implies one) | the file's bytes | the URL opened, and a newline | `ENOTSUP`, `EACCES`, `EIO` |
+| `open.download` | `name`, `type` | the file's (or the fetched URL's) bytes | none | `ENOTSUP`, `EACCES`, `EIO` |
+| `open.reveal` | `path`, absolute | none, `O_WRONLY` | none | `ENOTSUP` |
+
+Option values are JSON strings: `"` and `\` are escaped, control characters are `\u00XX`, and anything else, UTF-8 included, is passed as it is, so no path or URL can break the header. The kernel's errno map applies (`EACCES`, `ENOTSUP`, `ENOENT`, `EIO`, `EINTR`); every errno prints the one-line message above and exits 1.
+
+What answers which kind: seven's first page with `/dev/embedder` answers `open.url` only, so `open.file` and `open.download` are `ENOTSUP` until the seven release that adds them; `open.reveal` is `ENOTSUP` in every seven so far. `-v` works in any seven, and shows images inline with a slicc-agent that has #713.
 
 **In SLICC, the unprefixed names win.** The package has both `bin` and `slicc.commands`, and both name `scopen`. The kernel ignores a package's `bin` entry when the same package declares that name in `slicc.commands` (where it reads `bin` at all, in its appended command roots), so `/usr/bin/scopen` is always the SLICC command. bios's base set doesn't put `bin` links on `PATH`, and after a `pnpm add -g`, bios removes the `$PNPM_HOME/bin` link pnpm made for each name a package declares in both `bin` and `slicc.commands`, so the Node script, which SLICC has no Node to run, never shadows `open`, `xdg-open` or `scopen`.
 
@@ -209,8 +225,9 @@ npm run test:unit
 ```
 
 - `npm run lint`: Biome, the no-comment check and the other [slicc-shared-web](https://github.com/ai-ecoverse/slicc-shared-web) checks.
-- `npm test`: the integration tests in `test/integration/`. `repo.test.mjs` checks the workflow, the pinned tooling, the release config, the repo rules and what `npm pack` ships. The host tests run `host/` against fake `open`, `xdg-open`, `gio`, `powershell.exe`, `pwsh.exe`, `explorer.exe` and `notepad.exe` on a temporary `PATH`, with the platform forced, so each branch is checked on any machine. `install.test.mjs` runs `install.sh` on a tarball packed from the tree, with the Node on `PATH` and with a Node download from a fake `nodejs.org`, and `--upgrade` against a release served from a local directory; `install.ps1` is checked statically, and run when `pwsh` is on `PATH`.
-- `npm run test:unit`: the unit tests in the gitignored `test/unit/`; `scripts/cover.mjs` writes Node's coverage of `host/` to `coverage/unit/lcov.info`. The pre-commit hook wants 100% coverage of the changed lines.
+- `npm run lint` also runs `shellcheck` and `dash -n` on `install.sh` and `bin/*`.
+- `npm test`: the integration tests in `test/integration/`. `repo.test.mjs` checks the workflow, the pinned tooling, the release config, the repo rules and what `npm pack` ships. `commands.test.mjs` runs `bin/*` in a node kernel from `@ai-ecoverse/slicc-kernel` with wasm-bash and wasm-coreutils, behind a fake page that records each request's kind, options and body: every kind, hostile URLs and paths in the header, each errno, the page's refusals, `-v` by magic bytes, a user who can't read the file, a session no page answers, and slicc-kernel 1.152.2 (the devDependency `slicc-kernel-without-embedder`), which refuses the package, and with `engines` stripped, has no `/dev/embedder`. The host tests run `host/` against fake `open`, `xdg-open`, `gio`, `powershell.exe`, `pwsh.exe`, `explorer.exe` and `notepad.exe` on a temporary `PATH`, with the platform forced, so each branch is checked on any machine. `install.test.mjs` runs `install.sh` on a tarball packed from the tree, with the Node on `PATH` and with a Node download from a fake `nodejs.org`, and `--upgrade` against a release served from a local directory; `install.ps1` is checked statically, and run when `pwsh` is on `PATH`.
+- `npm run test:unit`: the unit tests in the gitignored `test/unit/`; `scripts/cover.mjs` writes Node's coverage of `host/`, and the line coverage of `bin/*` from the `set -x` traces the tests write to `$SLICC_OPEN_TRACE`, to `coverage/unit/lcov.info`. The pre-commit hook wants 100% coverage of the changed lines.
 
 CI is `.github/workflows/ci.yml`, the only workflow, which runs [slicc-shared-web's pipeline](https://github.com/ai-ecoverse/slicc-shared-web#pipeline) at the devDependency's version: `npm run lint`, then `npm test`, then on a pull request the Claude and Codex reviews. The merge queue requires `ci / integration` and `ci / review`. On a push to `main`, semantic-release releases and publishes to npm through trusted publishing, with provenance from `ci.yml`.
 
