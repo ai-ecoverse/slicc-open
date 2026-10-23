@@ -45,7 +45,7 @@ describe('the repository', () => {
 
   it('pins slicc-shared-web and its tools exactly, on the 2.x line', () => {
     for (const [name, version] of Object.entries(pkg.devDependencies)) {
-      assert.match(version, /^\d+\.\d+\.\d+$/, name);
+      assert.match(version, /^(npm:@[\w-]+\/[\w-]+@)?\d+\.\d+\.\d+(-[\w.]+)?$/, name);
     }
     assert.match(pkg.devDependencies['@ai-ecoverse/slicc-shared-web'], /^2\./);
     const lefthook = read('lefthook.yml');
@@ -69,9 +69,18 @@ describe('the repository', () => {
     assert.equal(pkg.engines.node, '>=24');
     assert.deepEqual(pkg.bin, { scopen: 'host/scopen.mjs' });
     assert.deepEqual(pkg.slicc.unitSources, ['host']);
-    for (const name of Object.keys(pkg.slicc.commands ?? {})) {
-      assert.ok(['open', 'xdg-open', 'scopen'].includes(name), name);
-    }
+    assert.deepEqual(pkg.slicc.commands, {
+      open: { script: 'bin/open' },
+      'xdg-open': { script: 'bin/xdg-open' },
+      scopen: { script: 'bin/scopen' },
+    });
+    assert.equal(pkg.engines['slicc-kernel'], '>=1.153.0');
+    assert.match(pkg.scripts.lint, /shellcheck -s sh -e SC1091 install\.sh bin\/\*/);
+    assert.match(pkg.scripts.lint, /dash -n/);
+    assert.match(
+      read('lefthook.yml'),
+      /glob: "bin\/\*"\n\s+run: npm run --silent test:unit && npx --no-install slicc-diff-cover/
+    );
   });
 
   it('publishes to npm from ci.yml through semantic-release, with provenance', () => {

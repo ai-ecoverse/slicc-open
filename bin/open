@@ -1,0 +1,493 @@
+#!/bin/sh
+me=${0##*/}
+case $me in
+  scopen | xdg-open) ;;
+  *) me=open ;;
+esac
+dev=/dev/embedder
+nl='
+'
+say() {
+  printf '%s\n' "$@"
+}
+usage() {
+  if [ "$me" = xdg-open ]; then
+    say 'usage: xdg-open {FILE | URL}'
+    return
+  fi
+  say "usage: $me [-e | -t | -f | -d | -v | -R] [-gn] [-u URL] [--] [TARGET ...]"
+}
+help() {
+  usage
+  if [ "$me" = xdg-open ]; then
+    say '  FILE | URL      open it in a new tab of seven'"'"'s page'
+    say '  --help          print this usage and exit'
+    say '  --manual        print the full usage, with the exit status, and exit'
+  else
+    say '  TARGET          a URL (a scheme of two or more characters and a colon) or a path'
+    say '  -e, -t          open the file as plain text'
+    say '  -f              save stdin to /tmp/open-<random>.txt and open it as plain text'
+    say '  -d, --download  download the file, or an http or https URL fetched with curl'
+    say '  -v, --view      print <img:PATH> for the agent to show the image inline'
+    say '  -R              reveal the file'
+    say '  -g              open the tab without moving focus to it'
+    say '  -n              accepted: every target gets a new tab'
+    say '  -u URL          open URL'
+    say '  -h, --help      print this usage and exit'
+  fi
+  say '  --version       print the version and exit'
+  say '  --upgrade       print the command that upgrades slicc-open'
+}
+manual() {
+  help
+  say 'exit status: 0 when everything opened, 1 when a target or the page failed, 2 for a usage error'
+}
+bad() {
+  printf '%s: %s\n' "$me" "$1" >&2
+  usage >&2
+  exit 2
+}
+die() {
+  printf '%s: %s\n' "$me" "$1" >&2
+  exit 1
+}
+version() {
+  v=$(cat -- "${0%/*}/../package.json") || exit 1
+  v=${v#*\"version\"}
+  v=${v#*\"}
+  say "${v%%\"*}"
+  exit 0
+}
+upgrade() {
+  say 'pnpm add -g @ai-ecoverse/slicc-open@latest'
+  exit 0
+}
+json() {
+  s=$1
+  j=
+  case $s in
+    *[\"\\]* | *[[:cntrl:]]*) ;;
+    *)
+      j=\"$s\"
+      return
+      ;;
+  esac
+  while [ -n "$s" ]; do
+    r=${s#?}
+    c=${s%"$r"}
+    s=$r
+    case $c in
+      \" | \\) j=$j\\$c ;;
+      [[:cntrl:]]) j=$j$(printf '\\u%04x' "'$c") ;;
+      *) j=$j$c ;;
+    esac
+  done
+  j=\"$j\"
+}
+field() {
+  json "$2"
+  h="$h,\"$1\":$j"
+}
+isurl() {
+  case $1 in
+    *:*) ;;
+    *) return 1 ;;
+  esac
+  scheme=${1%%:*}
+  case $scheme in
+    [A-Za-z]*[A-Za-z0-9+.-]) ;;
+    *) return 1 ;;
+  esac
+  case $scheme in
+    *[!A-Za-z0-9+.-]*) return 1 ;;
+  esac
+}
+web() {
+  case $1 in
+    [hH][tT][tT][pP]://* | [hH][tT][tT][pP][sS]://*) return 0 ;;
+  esac
+  return 1
+}
+local_path() {
+  case $1 in
+    /*) p=$1 ;;
+    *) p=./$1 ;;
+  esac
+}
+check() {
+  local_path "$1"
+  if [ "$mode" = -R ]; then
+    err=$(ls -d -- "$p" 2>&1 >/dev/null) && return
+  else
+    err=$(head -c 1 -- "$p" 2>&1 >/dev/null) && return
+  fi
+  err=${err##*"$nl"}
+  die "$1: ${err##*: }"
+}
+resolve() {
+  local_path "$1"
+  abs=$(realpath -- "$p" && printf x) || exit 1
+  abs=${abs%x}
+  abs=${abs%"$nl"}
+}
+mime() {
+  t=
+  case $1 in
+    *.*) ;;
+    *) return ;;
+  esac
+  ext=${1##*.}
+  case $ext in
+    *[!A-Za-z0-9]*) return ;;
+  esac
+  ext=$(printf '%s' "$ext" | tr '[:upper:]' '[:lower:]')
+  case $ext in
+    html | htm) t=text/html ;;
+    css) t=text/css ;;
+    js | mjs) t=text/javascript ;;
+    json) t=application/json ;;
+    txt | log) t=text/plain ;;
+    md) t=text/markdown ;;
+    csv) t=text/csv ;;
+    xml) t=application/xml ;;
+    svg) t=image/svg+xml ;;
+    png) t=image/png ;;
+    jpg | jpeg) t=image/jpeg ;;
+    gif) t=image/gif ;;
+    webp) t=image/webp ;;
+    avif) t=image/avif ;;
+    ico) t=image/x-icon ;;
+    pdf) t=application/pdf ;;
+    wasm) t=application/wasm ;;
+    zip) t=application/zip ;;
+    mp3) t=audio/mpeg ;;
+    wav) t=audio/wav ;;
+    mp4) t=video/mp4 ;;
+    webm) t=video/webm ;;
+  esac
+}
+refused() {
+  msg=
+  case $res in
+    *"$dev: "*) msg=${res#*"$dev: "} ;;
+  esac
+  msg=${msg%%"$nl"*}
+  errno=${res##*"$nl"}
+  printf '%s: %s: %s\n' "$me" "$1" "${msg:-request failed}" >&2
+  case $errno in
+    *": Permission denied")
+      printf "%s: if seven asked, answer in seven's tab (a click allows it), then run %s again\n" "$me" "$me" >&2
+      ;;
+  esac
+  exit 1
+}
+tell() {
+  res=$(printf '%s\n' "$h" | cat 2>&1 >"$dev") || refused "$1"
+}
+talk() {
+  printf '%s\n' "$h" | cat >&3 || return 1
+  cat -- "$1" >&3 || return 1
+  cat <&3
+}
+ask() {
+  res=$(talk "$1" 2>&1 3<>"$dev") || refused "$2"
+}
+image() {
+  check "$1"
+  resolve "$1"
+  case $abs in
+    *"$nl"*) die "$1: a path with a newline can't be shown inline" ;;
+  esac
+  magic=$(head -c 12 -- "$p" | od -An -tx1 -v | tr -d ' \n')
+  case $magic in
+    89504e470d0a1a0a* | ffd8ff* | 474946383[79]61* | 52494646????????57454250) ;;
+    *) die "$1: not a PNG, JPEG, GIF or WebP image" ;;
+  esac
+}
+open_url() {
+  h='{"kind":"open.url"'
+  field url "$1"
+  [ -z "$bg" ] || h="$h,\"background\":true"
+  h="$h}"
+  tell "$1"
+  say "opened $1"
+}
+open_path() {
+  resolve "$1"
+  if [ "$mode" = -R ]; then
+    h='{"kind":"open.reveal"'
+    field path "$abs"
+    h="$h}"
+    tell "$abs"
+    say "revealed $abs"
+    return
+  fi
+  kind=open.file
+  [ "$mode" != -d ] || kind=open.download
+  h="{\"kind\":\"$kind\""
+  field name "${abs##*/}"
+  case $mode in
+    -e | -t | -f) t=text/plain ;;
+    *) mime "${abs##*/}" ;;
+  esac
+  [ -z "$t" ] || field type "$t"
+  h="$h}"
+  ask "$abs" "$abs"
+  if [ "$mode" = -d ]; then
+    say "downloaded $abs"
+    return
+  fi
+  say "opened $abs → ${res##*"$nl"}"
+}
+fetch() {
+  name=${1%%[?#]*}
+  name=${name#*://}
+  case $name in
+    */*) name=${name##*/} ;;
+    *) name= ;;
+  esac
+  [ -n "$name" ] || name=download
+  h='{"kind":"open.download"'
+  field name "$name"
+  mime "$name"
+  [ -z "$t" ] || field type "$t"
+  h="$h}"
+  dl=$(mktemp /tmp/open-XXXXXXXX) || exit 1
+  trap 'rm -f -- "$dl"' EXIT
+  err=$(curl -fsSL -- "$1" 2>&1 >"$dl") || die "$1: ${err##*"$nl"}"
+  ask "$dl" "$1"
+  rm -f -- "$dl"
+  say "downloaded $1"
+}
+flag() {
+  case $1 in
+    -h) help=1 ;;
+    --version) ver=$1 ;;
+    --upgrade) ver=${ver:-$1} ;;
+    -g) bg=1 ;;
+    -n) ;;
+    -e | -t | -f | -d | -v | -R)
+      case "$modes " in
+        *" $1 "*) ;;
+        *) modes="$modes $1" ;;
+      esac
+      ;;
+    *) unsup=${unsup:-$2} ;;
+  esac
+}
+problem() {
+  perr=${perr:-$1}
+}
+argc=$#
+perr=
+unsup=
+help=
+ver=
+bg=
+modes=
+args=
+seen=
+n=$#
+if [ "$me" = xdg-open ]; then
+  manual=
+  while [ "$n" -gt 0 ]; do
+    arg=$1
+    shift
+    n=$((n - 1))
+    if [ -n "$seen" ]; then
+      set -- "$@" "t$arg"
+      continue
+    fi
+    case $arg in
+      --) seen=1 ;;
+      --help) help=1 ;;
+      --manual) manual=1 ;;
+      --version) ver=$arg ;;
+      --upgrade) ver=${ver:-$arg} ;;
+      -?*) problem "unknown option $arg" ;;
+      *)
+        seen=1
+        set -- "$@" "t$arg"
+        ;;
+    esac
+  done
+  if [ -n "$help" ]; then
+    help
+    exit 0
+  fi
+  if [ -n "$manual" ]; then
+    manual
+    exit 0
+  fi
+  [ -z "$perr" ] || bad "$perr"
+  [ $# -le 1 ] || bad 'more than one target'
+else
+  if [ "$argc" -eq 0 ]; then
+    usage >&2
+    exit 2
+  fi
+  while [ "$n" -gt 0 ]; do
+    arg=$1
+    shift
+    n=$((n - 1))
+    if [ -n "$seen" ]; then
+      set -- "$@" "t$arg"
+      continue
+    fi
+    case $arg in
+      --) seen=1 ;;
+      --args)
+        args=1
+        while [ "$n" -gt 0 ]; do
+          shift
+          n=$((n - 1))
+        done
+        ;;
+      '' | - | [!-]*)
+        seen=1
+        set -- "$@" "t$arg"
+        ;;
+      --*)
+        name=${arg%%=*}
+        case $name in
+          --download | --view | --help | --version | --upgrade)
+            if [ "$name" != "$arg" ]; then
+              problem "$name takes no value"
+              continue
+            fi
+            case $name in
+              --download) flag -d "$name" ;;
+              --view) flag -v "$name" ;;
+              --help) flag -h "$name" ;;
+              *) flag "$name" "$name" ;;
+            esac
+            ;;
+          --env | --stdin | --stdout | --stderr | --arch | --size)
+            if [ "$name" = "$arg" ]; then
+              if [ "$n" -eq 0 ]; then
+                problem "$name needs a value"
+                continue
+              fi
+              shift
+              n=$((n - 1))
+            fi
+            flag "$name" "$name"
+            ;;
+          *) problem "unknown option $name" ;;
+        esac
+        ;;
+      *)
+        rest=${arg#-}
+        while [ -n "$rest" ]; do
+          r=${rest#?}
+          l=${rest%"$r"}
+          rest=$r
+          case $l in
+            [etfFWRngjdvh]) flag "-$l" "-$l" ;;
+            [abus])
+              if [ -n "$rest" ]; then
+                val=$rest
+                rest=
+              elif [ "$n" -gt 0 ]; then
+                val=$1
+                shift
+                n=$((n - 1))
+              else
+                problem "-$l needs a value"
+                break
+              fi
+              if [ "$l" = u ]; then
+                set -- "$@" "u$val"
+              else
+                flag "-$l" "-$l"
+              fi
+              ;;
+            *) problem "unknown option -$l" ;;
+          esac
+        done
+        ;;
+    esac
+  done
+  if [ -n "$help" ]; then
+    help
+    exit 0
+  fi
+  [ -z "$perr" ] || bad "$perr"
+fi
+if [ -n "$ver" ]; then
+  [ "$argc" -eq 1 ] || bad "$ver takes no other arguments"
+  [ "$ver" = --upgrade ] && upgrade
+  version
+fi
+[ -n "$unsup" ] || unsup=${args:+--args}
+[ -z "$unsup" ] || bad "$unsup is not supported in SLICC"
+mode=
+both=
+for m in -e -t -f -d -v -R; do
+  case "$modes " in
+    *" $m "*)
+      mode=${mode:-$m}
+      both="$both and $m"
+      ;;
+  esac
+done
+[ "$mode" = "${both# and }" ] || bad "${both# and } can't be given together"
+for item; do
+  case $item in
+    u*) isurl "${item#u}" || bad "-u needs a URL, not ${item#u}" ;;
+  esac
+done
+[ "$mode" != -f ] || [ $# -eq 0 ] || bad '-f takes no targets'
+[ "$mode" = -f ] || [ $# -gt 0 ] || bad 'no target'
+curl=
+for item; do
+  case $item in
+    u*) ;;
+    *) isurl "${item#t}" || continue ;;
+  esac
+  url=${item#?}
+  case $mode in
+    -R | -v | -e | -t) bad "$mode takes paths, not URLs" ;;
+    -d)
+      web "$url" || bad "-d takes paths and http or https URLs, not $url"
+      curl=1
+      ;;
+  esac
+done
+if [ "$mode" = -v ]; then
+  for item; do
+    image "${item#t}"
+  done
+  for item; do
+    resolve "${item#t}"
+    say "<img:$abs>"
+  done
+  exit 0
+fi
+if [ ! -c "$dev" ]; then
+  die "$dev not available (needs slicc-kernel >= 1.153.0)"
+fi
+if [ -n "$curl" ] && ! command -v curl >/dev/null 2>&1; then
+  die '-d with a URL needs curl on PATH'
+fi
+for item; do
+  case $item in
+    u*) ;;
+    *) isurl "${item#t}" || check "${item#t}" ;;
+  esac
+done
+if [ "$mode" = -f ]; then
+  tmp=$(mktemp --suffix=.txt /tmp/open-XXXXXXXX) || exit 1
+  cat >"$tmp" || exit 1
+  set -- "t$tmp"
+fi
+for item; do
+  target=${item#?}
+  if [ "$item" = "t$target" ] && ! isurl "$target"; then
+    open_path "$target"
+  elif [ "$mode" = -d ]; then
+    fetch "$target"
+  else
+    open_url "$target"
+  fi
+done
