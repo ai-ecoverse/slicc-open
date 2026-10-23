@@ -7,6 +7,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -418,6 +419,54 @@ describe('on real Windows', { skip: !onWindows && 'not Windows' }, () => {
     const local = mkdtempSync(join(scratch, 'local-'));
     const bin = join(local, 'bin');
     const bare = `${system};${dirname(system)};${dirname(powershell)}`;
+    const zip = release('zip', version);
+    const badDist = join(served, 'bad-dist');
+    mkdirSync(join(badDist, 'v24.99.0'), { recursive: true });
+    const badArchive = join(badDist, 'v24.99.0', `${name}.zip`);
+    const whole = readFileSync(archive);
+    writeFileSync(badArchive, whole.subarray(0, whole.length >> 1));
+    writeFileSync(
+      join(badDist, 'v24.99.0', 'SHASUMS256.txt'),
+      `${sha256(badArchive)}  ${name}.zip\n`
+    );
+    writeFileSync(
+      join(badDist, 'index.json'),
+      JSON.stringify([{ version: 'v24.99.0', lts: 'Krypton' }])
+    );
+    const badLocal = mkdtempSync(join(scratch, 'local-'));
+    const temp = mkdtempSync(join(scratch, 'temp-'));
+    const corrupt = await run(
+      powershell,
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        installPs1,
+        '-Dir',
+        join(badLocal, 'bin'),
+      ],
+      {
+        env: withPath(
+          clean({
+            LOCALAPPDATA: badLocal,
+            TEMP: temp,
+            TMP: temp,
+            SLICC_INSTALL_BASE_URL: zip,
+            SLICC_NODE_DIST_BASE: `${url}/bad-dist`,
+          }),
+          bare
+        ),
+      }
+    );
+    assert.equal(corrupt.status, 1);
+    assert.match(corrupt.stderr, new RegExp(`install\\.ps1: could not unpack ${name}\\.zip`));
+    assert.ok(!existsSync(join(badLocal, 'slicc-open', 'node')));
+    assert.deepEqual(
+      readdirSync(temp).filter((entry) => entry.startsWith('scopen-')),
+      []
+    );
     const result = await run(
       powershell,
       [
@@ -434,7 +483,7 @@ describe('on real Windows', { skip: !onWindows && 'not Windows' }, () => {
         env: withPath(
           clean({
             LOCALAPPDATA: local,
-            SLICC_INSTALL_BASE_URL: release('zip', version),
+            SLICC_INSTALL_BASE_URL: zip,
             SLICC_NODE_DIST_BASE: `${url}/dist`,
           }),
           bare

@@ -306,6 +306,30 @@ describe('install.sh', { skip: !curl && 'curl is not installed' }, () => {
     assert.ok(!existsSync(join(h, 'bin', 'scopen')));
   });
 
+  it('fails with exit 1 and leaves nothing behind when the tarball does not unpack', async () => {
+    const bad = mkdtempSync(join(scratch, 'corrupt-'));
+    cpSync(dir, bad, { recursive: true });
+    const tgz = join(bad, `slicc-open-${version}.tgz`);
+    const whole = readFileSync(tgz);
+    writeFileSync(tgz, whole.subarray(0, whole.length >> 1));
+    writeFileSync(join(bad, 'SHA256SUMS'), `${sha256(tgz)}  slicc-open-${version}.tgz\n`);
+    const h = home();
+    const temp = mkdtempSync(join(scratch, 'tmp-'));
+    const result = await run('sh', [installSh, '--dir', join(h, 'bin')], {
+      env: env({ HOME: h, TMPDIR: temp, SLICC_INSTALL_BASE_URL: pathToFileURL(bad).href }),
+    });
+    assert.equal(result.status, 1);
+    assert.match(
+      result.stderr,
+      new RegExp(
+        `install\\.sh: could not unpack slicc-open-${version.replaceAll('.', '\\.')}\\.tgz\n$`
+      )
+    );
+    assert.deepEqual(readdirSync(join(h, '.local/share/slicc-open')), []);
+    assert.deepEqual(readdirSync(temp), []);
+    assert.ok(!existsSync(join(h, 'bin', 'scopen')));
+  });
+
   it('handles its options before it needs HOME, which only the default directories need', async () => {
     const bare = env({});
     delete bare.HOME;
@@ -470,6 +494,32 @@ describe('install.sh', { skip: !curl && 'curl is not installed' }, () => {
     });
     assert.equal(none.status, 1);
     assert.match(none.stderr, /no Node 24 or later in /);
+    const whole = readFileSync(archive);
+    writeFileSync(archive, whole.subarray(0, whole.length >> 1));
+    writeFileSync(join(dist, 'v24.99.0', 'SHASUMS256.txt'), `${sha256(archive)}  ${name}.tar.gz\n`);
+    writeFileSync(
+      join(dist, 'index.json'),
+      JSON.stringify([{ version: 'v24.99.0', lts: 'Krypton' }])
+    );
+    const broken = home();
+    const temp = mkdtempSync(join(scratch, 'tmp-'));
+    const corrupt = await run(join(bin, 'sh'), [installSh, '--dir', join(broken, 'bin')], {
+      env: env({
+        HOME: broken,
+        PATH: bin,
+        TMPDIR: temp,
+        SLICC_INSTALL_BASE_URL: pathToFileURL(dir).href,
+        SLICC_NODE_DIST_BASE: pathToFileURL(dist).href,
+      }),
+    });
+    assert.equal(corrupt.status, 1);
+    assert.match(
+      corrupt.stderr,
+      new RegExp(`install\\.sh: could not unpack ${name}\\.tar\\.gz\n$`)
+    );
+    assert.deepEqual(readdirSync(join(broken, '.local/share/slicc-open')), []);
+    assert.deepEqual(readdirSync(temp), []);
+    assert.ok(!existsSync(join(broken, 'bin', 'scopen')));
   });
 });
 
@@ -771,9 +821,21 @@ describe('install.ps1', () => {
       );
       assert.equal(failed.status, 1);
       assert.match(failed.stderr, /install\.ps1: npm install failed for slicc-open-0\.7\.0\.tgz/);
+      release(served, '0.6.0');
+      const tgz = join(served, 'slicc-open-0.6.0.tgz');
+      const whole = readFileSync(tgz);
+      writeFileSync(tgz, whole.subarray(0, whole.length >> 1));
+      writeFileSync(join(served, 'SHA256SUMS'), `${sha256(tgz)}  slicc-open-0.6.0.tgz\n`);
+      const corrupt = await run(
+        pwsh,
+        ['-NoProfile', '-NonInteractive', '-File', installPs1, '-Version', '0.6.0', '-Dir', bin],
+        { env: env({ LOCALAPPDATA: local, SLICC_INSTALL_BASE_URL: url }) }
+      );
+      assert.equal(corrupt.status, 1);
+      assert.match(corrupt.stderr, /install\.ps1: could not unpack slicc-open-0\.6\.0\.tgz/);
       assert.deepEqual(
         readdirSync(join(local, 'slicc-open')).filter(
-          (name) => !/^\d/.test(name) || name === '0.7.0'
+          (name) => !/^\d/.test(name) || name === '0.7.0' || name === '0.6.0'
         ),
         []
       );
