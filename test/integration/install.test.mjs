@@ -53,7 +53,7 @@ function release(at, as = version, patch = () => {}, status = 0) {
     encoding: 'utf8',
   });
   assert.equal(assets.status, status, assets.stderr);
-  if (status !== 0) return assets;
+  if (status !== 0) return { ...assets, dir };
   if (at) cpSync(dir, at, { recursive: true });
   return dir;
 }
@@ -148,6 +148,7 @@ describe('scripts/assets.mjs', () => {
       noEntry.stderr,
       'scripts/assets.mjs: slicc-open-0.6.0.tgz lacks host/scopen.mjs (bin scopen)\n'
     );
+    assert.deepEqual(readdirSync(noEntry.dir), ['ai-ecoverse-slicc-open-0.6.0.tgz']);
     const noBin = release(
       undefined,
       '0.6.1',
@@ -163,6 +164,10 @@ describe('scripts/assets.mjs', () => {
       noBin.stderr,
       'scripts/assets.mjs: slicc-open-0.6.1.tgz lacks a package.json with bin\n'
     );
+    assert.deepEqual(readdirSync(noBin.dir), ['ai-ecoverse-slicc-open-0.6.1.tgz']);
+    const rerun = spawnSync(process.execPath, [join(root, 'scripts/assets.mjs'), dir, version]);
+    assert.equal(rerun.status, 0, String(rerun.stderr));
+    assert.equal(readFileSync(join(dir, 'SHA256SUMS'), 'utf8'), lines.join('\n'));
     const bad = spawnSync(process.execPath, [join(root, 'scripts/assets.mjs'), dir, 'nope']);
     assert.equal(bad.status, 2);
     const none = spawnSync(process.execPath, [join(root, 'scripts/assets.mjs'), scratch, '1.0.0']);

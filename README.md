@@ -174,7 +174,7 @@ This section is the installer contract that slicc-open, slicc-capture, slicc-aud
 
 ### Release assets
 
-semantic-release's `@semantic-release/npm` packs the package into `release/` (`tarballDir`). `@semantic-release/exec` then runs `node scripts/assets.mjs release <version>`, which renames the tarball to `<pkg>-<version>.tgz`, refuses (exit 1, writing nothing) when the tarball's `package.json` has no `bin` or lacks a file a `bin` entry names, copies `install.sh` and `install.ps1` next to it, and writes `SHA256SUMS`: one `<sha256>  <name>` line each for the tarball, `install.sh` and `install.ps1`, in that order. `@semantic-release/github` attaches all four files to the release. `ci.yml` needs no release step of its own.
+semantic-release's `@semantic-release/npm` packs the package into `release/` (`tarballDir`). `@semantic-release/exec` then runs `node scripts/assets.mjs release <version>`, which refuses (exit 1, leaving `release/` as it was, npm's tarball name included) when the tarball's `package.json` has no `bin` or lacks a file a `bin` entry names, and otherwise renames the tarball to `<pkg>-<version>.tgz`, copies `install.sh` and `install.ps1` next to it, and writes `SHA256SUMS`: one `<sha256>  <name>` line each for the tarball, `install.sh` and `install.ps1`, in that order. `@semantic-release/github` attaches all four files to the release. `ci.yml` needs no release step of its own.
 
 ### Options and exit codes
 
