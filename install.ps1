@@ -181,11 +181,7 @@ try {
       'for /f "tokens=2 delims=:." %%c in (''chcp'') do set "SCOPEN_CP=%%c"',
       'chcp 65001 >nul',
       "set `"SCOPEN_INSTALL_DIR=$(& $escape $Dir)`"",
-      '(',
-      "`"$(& $escape $Node)`" `"$(& $escape $Entry)`" %*",
-      'call :done %%ERRORLEVEL%%',
-      'exit /b',
-      ')',
+      "`"$(& $escape $Node)`" `"$(& $escape $Entry)`" %* & call :done %%ERRORLEVEL%% & exit /b",
       ':done',
       'chcp %SCOPEN_CP% >nul',
       'exit /b %1',
@@ -194,7 +190,7 @@ try {
     [System.IO.File]::WriteAllText($Cmd, $cmdLines, (New-Object System.Text.UTF8Encoding $false))
 
     $Reported = & $Node $Entry --version
-    if ($LASTEXITCODE -ne 0 -or "$Reported" -ne "$BundleVersion") {
+    if ($LASTEXITCODE -ne 0 -or "$Reported" -ne "$BundleVersion" -and "$Reported" -ne "$BinName $BundleVersion") {
       Stop-Install "$Entry reports $Reported, not $BundleVersion"
     }
     Write-Output "$BinName $BundleVersion installed to $Launcher"

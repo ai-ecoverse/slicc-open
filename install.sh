@@ -218,7 +218,7 @@ chmod 755 "$LAUNCHER_TMP"
 mv "$LAUNCHER_TMP" "$LAUNCHER"
 
 REPORTED="$("$LAUNCHER" --version 2>/dev/null)" || die "$LAUNCHER --version failed"
-[ "$REPORTED" = "$BUNDLE_VERSION" ] || die "$LAUNCHER reports $REPORTED, not $BUNDLE_VERSION"
+[ "$REPORTED" = "$BUNDLE_VERSION" ] || [ "$REPORTED" = "$BIN_NAME $BUNDLE_VERSION" ] || die "$LAUNCHER reports $REPORTED, not $BUNDLE_VERSION"
 printf '%s %s installed to %s\n' "$BIN_NAME" "$BUNDLE_VERSION" "$LAUNCHER"
 
 case ":$PATH:" in
