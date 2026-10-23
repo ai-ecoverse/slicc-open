@@ -24,7 +24,7 @@ On Windows, in PowerShell:
 irm https://get.sliccy.ai/open.ps1 | iex
 ```
 
-The installers are `install.sh` and `install.ps1`, attached to every [GitHub release](https://github.com/ai-ecoverse/slicc-open/releases) with the package tarball and `SHA256SUMS`, in the style of [mcpcat's](https://github.com/ai-ecoverse/mcpcat) `install.sh`. They check the tarball against `SHA256SUMS`, unpack it into a versioned directory (`${XDG_DATA_HOME:-~/.local/share}/slicc-open/<version>`, or `%LOCALAPPDATA%\slicc-open\<version>` on Windows), and write a `scopen` launcher that runs it with that Node. Without get.sliccy.ai, the same installer comes straight from the release:
+The installers are `install.sh` and `install.ps1`, attached to every [GitHub release](https://github.com/ai-ecoverse/slicc-open/releases) with the package tarball (`slicc-open-<version>.tgz`) and `SHA256SUMS`, in the style of [mcpcat's](https://github.com/ai-ecoverse/mcpcat) `install.sh`. They check the tarball against `SHA256SUMS`, unpack it into a versioned directory (`${XDG_DATA_HOME:-~/.local/share}/slicc-open/<version>`, or `%LOCALAPPDATA%\slicc-open\<version>` on Windows), and write a `scopen` launcher that runs it with that Node. Without get.sliccy.ai, the same installer comes straight from the release:
 
 ```sh
 curl -fsSL https://github.com/ai-ecoverse/slicc-open/releases/latest/download/install.sh | sh
@@ -57,7 +57,7 @@ or without installing, `npx -p @ai-ecoverse/slicc-open scopen https://example.co
 
 Each command takes one or more targets (`xdg-open`: exactly one). A target is a URL when it starts with a scheme of two or more characters and a colon (`https:`, `mailto:`, `file:`, `about:`), so `C:\notes.txt` is a path; anything else is a path, relative to the working directory. Options come before the targets; `--` ends the options, and a target after it may start with `-`.
 
-The exit status is the same for every command: **0** when everything opened, **1** when a target or the tool failed (a file that doesn't exist, no opener on `PATH`, a tool that exits non-zero), and **2** for a usage error: an unknown option, a missing option value, no target, or an option that is unsupported where it runs. A usage error prints `<cmd>: <what is wrong>` and the usage line to stderr; an unsupported option prints `<cmd>: <option> is not supported in SLICC` (or `on Linux`, `on Windows`, `on macOS`). Nothing is opened unless every option and target is accepted first, and with several targets, the first failure stops the rest.
+The exit status is the same for every command: **0** when everything opened, **1** when a target or the tool failed (a file that doesn't exist, no opener on `PATH`, a tool that exits non-zero), and **2** for a usage error: an unknown option, a missing option value, no target, or an option that is unsupported where it runs. A usage error prints `<cmd>: <what is wrong>` and the usage line to stderr; an unsupported option prints `<cmd>: <option> is not supported in SLICC` (or `on Linux`, `on Windows`, `on macOS`), and one that needs `-a` there `<cmd>: <option> without -a is not supported on Linux` (or `on Windows`). Nothing is opened unless every option and target is accepted first, and with several targets, the first failure stops the rest.
 
 ### `open` and `scopen`
 
@@ -92,9 +92,10 @@ The exit status is the same for every command: **0** when everything opened, **1
 
 - **Unsupported, everywhere:** `-s` (macOS `open`'s SDK for header search) and header search itself, because `-h` is help in every slicc-open command; `scopen -h NSView` prints the usage.
 - **Unsupported in SLICC:** `-a`, `-b`, `-F`, `-W`, `-R`, `-j`, `-s`, `--args`, `--env`, `--stdin`, `--stdout`, `--stderr`, `--arch`. SLICC has one browser and no applications to choose, wait for or start fresh.
-- **Unsupported on macOS:** `-s`, `-d`, `-v`, `--size`. Every other option goes to `/usr/bin/open` unchanged, except `-h`, `--help`, `--version` and `--upgrade`, which `scopen` answers itself, and `--`, which it doesn't pass on.
+- **Unsupported on macOS:** `-s`, `-d`, `-v`, `--size`. Every other option goes to `open` unchanged, except `-h`, `--help`, `--version` and `--upgrade`, which `scopen` answers itself, and `--`, which it doesn't pass on.
 - **Unsupported on Linux:** `-b`, `-e`, `-t`, `-F`, `-g`, `-j`, `-s`, `--arch`, `-d`, `-v`, `--size`; `-W`, `-n`, `--args`, `--stdin`, `--stdout` and `--stderr` without `-a`.
 - **Unsupported on Windows:** `-b`, `-F`, `-g`, `-s`, `--arch`, `-d`, `-v`, `--size`; `-n`, `--args`, `--stdin`, `--stdout` and `--stderr` without `-a`.
+- **On Linux and Windows,** `-R` takes paths only, and no `-a`, `-e`, `-t` or `-f`; `-a` takes no `-e` or `-t`. These are usage errors.
 - **`--size`** takes `low` (256x256), `medium` (768x768), `high` (1536x1536) or `WxH` (for example `512x512`), as in slicc 6. The image is fit inside the box with its aspect ratio kept, and never scaled up. `-v` without `--size` inlines nothing: it prints the image's native size, its bytes and type, and the `--size` choices to stderr, and exits 1, so one unbounded image can't fill the agent's context. `--size` without `-v` is a usage error.
 - `-d` and `-v` work on paths only; with a URL they are a usage error. Of `-d`, `-v`, `-e`, `-t` and `-f`, at most one may be given, and `-f` takes no targets.
 
@@ -112,7 +113,7 @@ The exit status is the same for every command: **0** when everything opened, **1
 
 ### Help
 
-`-h` and `--help` (`--help` alone for `xdg-open`) print `usage: <cmd> …` and one line per option to stdout and exit 0, wherever they appear among the options; the other arguments are not checked. `open` and `scopen` with no arguments print the same usage, to stderr, and exit 2.
+`-h` and `--help` (`--help` alone for `xdg-open`) print `usage: <cmd> …` and one line per option to stdout and exit 0, wherever they appear among the options; the other arguments are not checked. `open` and `scopen` with no arguments print the same usage, to stderr, and exit 2. `--version` and `--upgrade` take no other arguments.
 
 ## In SLICC
 
@@ -135,12 +136,12 @@ Only `scopen` is installed (the package's `bin`, a small Node script in `host/`)
 
 | platform | opener | a target is run as |
 | --- | --- | --- |
-| macOS | `/usr/bin/open` | `open` *options* *targets*, all in one call |
+| macOS | `open`, the first on `PATH` (`/usr/bin/open`) | `open` *options* *targets*, all in one call |
 | Linux | `xdg-open`, else `gio open`, the first on `PATH` | `xdg-open TARGET` (or `gio open TARGET`), once per target, in order |
 | Windows | `powershell.exe`, else `pwsh.exe`, the first on `PATH` | `Start-Process`, once per target, in order |
 
-- **Spawning:** the tool runs with a fixed argv and no shell, and `scopen` exits with the status above once the opener (or with `-W`, the application) has exited. File targets are checked first (`scopen: <path>: No such file or directory`, exit 1) and passed as absolute paths, so none can be read as an option. URLs are passed unchanged. Other Unix systems are treated as Linux.
-- **Windows:** `scopen` runs `powershell.exe -NoProfile -NonInteractive -Command <script>`, where the script is a constant. The targets and options reach it as JSON in the `SCOPEN_ARGV` environment variable, which the script parses and binds to `Start-Process`'s parameters (`-FilePath`, `-ArgumentList`, `-Wait`, `-WindowStyle`, `-Redirect…`), so no URL or path is ever part of the script's text. `cmd /c start` is never used. `-R` runs `explorer.exe` with the single argument `/select,<path>`, and `-e`, `-t` and `-f` run `notepad.exe` with the path.
+- **Spawning:** the tool runs with a fixed argv and no shell, and `scopen` exits with the status above once the opener (or with `-W`, the application) has exited. File targets are checked first (`scopen: <path>: No such file or directory`, exit 1) and passed as absolute paths, so none can be read as an option. URLs are passed unchanged. The opener's stdout is discarded, so a browser it starts can't hold the caller's pipe open. Other Unix systems are treated as Linux.
+- **Windows:** `scopen` runs `powershell.exe -NoProfile -NonInteractive -Command <script>`, where the script is a constant. The targets and options reach it as JSON in the `SCOPEN_ARGV` environment variable, which the script parses and binds to `Start-Process`'s parameters (`-FilePath`, `-ArgumentList`, `-Wait`, `-WindowStyle`, `-Redirect…`), so no URL or path is ever part of the script's text. `cmd /c start` is never used. With `-a`, the targets and the `--args` reach `-ArgumentList` as one command line, quoted the way Windows programs split it. `-R` runs `explorer.exe` with the single argument `/select,<path>`, whose exit status is ignored (it is 1 even when the folder opened), and `-e`, `-t` and `-f` run `notepad.exe` with the path, without waiting unless `-W` is given.
 - **`-a` on Linux** starts `APP` from `PATH`, detached unless `-W` is given, with the targets and then the `--args` as its argv; a missing `APP` prints `scopen: APP: command not found` and exits 1.
 - **Errors:** with no opener on `PATH`, `scopen: no opener found (tried xdg-open, gio)` (the names tried on that platform) to stderr, exit 1. An opener that exits non-zero has its stderr passed through, and `scopen` exits 1.
 
@@ -149,6 +150,8 @@ Only `scopen` is installed (the package's `bin`, a small Node script in `host/`)
 Every host command takes `--upgrade`. It runs the latest release's installer (`install.sh`, or `install.ps1` on Windows) with `--dir` set to the directory the command is installed in, so the new version replaces the old one in place, then prints `<cmd>: <old> → <new>` (for example `scopen: 1.2.0 → 1.3.0`), or `<cmd>: already up to date (<version>)`, to stdout and exits 0. If the installer fails, its stderr is passed through and the command exits 1. A command installed with npm prints `npm install -g @ai-ecoverse/<package>@latest` to run instead, and exits 0. In SLICC, `--upgrade` prints `pnpm add -g @ai-ecoverse/<package>@latest` to run, and exits 0; it installs nothing itself. `--upgrade` takes no other arguments.
 
 For slicc-open, `<package>` is `slicc-open`, and the commands are `scopen` on a host and `open`, `xdg-open` and `scopen` in SLICC.
+
+The launcher the installer writes sets `SCOPEN_INSTALL_DIR` to its own directory; that is how `scopen` knows the installer put it there (it removes the variable before it starts anything else), and without it `scopen` counts as installed with npm. The installer is downloaded from `https://github.com/ai-ecoverse/slicc-open/releases/latest/download/` and run as `sh install.sh --dir DIR`, or `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File install.ps1 -Dir DIR`; the line it prints, `scopen <version> installed to <launcher>`, names the new version. `SLICC_INSTALL_BASE_URL`, when set, replaces that release URL for `--upgrade` and for the installers' own downloads.
 
 ## Development
 
@@ -160,7 +163,7 @@ npm run test:unit
 ```
 
 - `npm run lint`: Biome, the no-comment check and the other [slicc-shared-web](https://github.com/ai-ecoverse/slicc-shared-web) checks.
-- `npm test`: the integration tests in `test/integration/`. `repo.test.mjs` checks the workflow, the pinned tooling, the release config, the repo rules and what `npm pack` ships. The host tests run `host/` against fake `open`, `xdg-open`, `gio`, `powershell.exe`, `pwsh.exe`, `explorer.exe` and `notepad.exe` on a temporary `PATH`, with the platform forced, so each branch is checked on any machine.
+- `npm test`: the integration tests in `test/integration/`. `repo.test.mjs` checks the workflow, the pinned tooling, the release config, the repo rules and what `npm pack` ships. The host tests run `host/` against fake `open`, `xdg-open`, `gio`, `powershell.exe`, `pwsh.exe`, `explorer.exe` and `notepad.exe` on a temporary `PATH`, with the platform forced, so each branch is checked on any machine. `install.test.mjs` runs `install.sh` on a tarball packed from the tree, with the Node on `PATH` and with a Node download from a fake `nodejs.org`, and `--upgrade` against a release served from a local directory; `install.ps1` is checked statically, and run when `pwsh` is on `PATH`.
 - `npm run test:unit`: the unit tests in the gitignored `test/unit/`; `scripts/cover.mjs` writes Node's coverage of `host/` to `coverage/unit/lcov.info`. The pre-commit hook wants 100% coverage of the changed lines.
 
 CI is `.github/workflows/ci.yml`, the only workflow, which runs [slicc-shared-web's pipeline](https://github.com/ai-ecoverse/slicc-shared-web#pipeline) at the devDependency's version: `npm run lint`, then `npm test`, then on a pull request the Claude and Codex reviews. The merge queue requires `ci / integration` and `ci / review`. On a push to `main`, semantic-release releases and publishes to npm through trusted publishing, with provenance from `ci.yml`.

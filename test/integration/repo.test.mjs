@@ -52,6 +52,11 @@ describe('the repository', () => {
     assert.match(lefthook, /^assert_lefthook_installed: true$/m);
     assert.match(lefthook, /node_modules\/@ai-ecoverse\/slicc-shared-web\/lefthook\.yml$/m);
     assert.match(lefthook, /slicc-shared-web hooks missing, run npm install'; exit 1;/);
+    assert.equal(pkg.scripts.prepare, 'slicc-install-hooks');
+    assert.equal(
+      read('.githooks/pre-commit'),
+      '#!/bin/sh\nhook="${0%/*}/../node_modules/.git-hooks/${0##*/}"\n[ -x "$hook" ] || { echo "${0##*/}: run npm install" >&2; exit 1; }\nexec "$hook" "$@"\n'
+    );
     assert.deepEqual(JSON.parse(read('renovate.json')).extends, [
       'github>ai-ecoverse/slicc-shared-web',
     ]);
@@ -76,8 +81,30 @@ describe('the repository', () => {
     assert.equal(pkg.publishConfig.provenance, true);
     const release = JSON.parse(read('.releaserc.json'));
     assert.deepEqual(release.branches, ['main']);
-    assert.ok(release.plugins.includes('@semantic-release/npm'));
+    assert.ok(release.plugins.some((entry) => [entry].flat()[0] === '@semantic-release/npm'));
     assert.doesNotMatch(JSON.stringify(release), /npmPublish/);
+  });
+
+  it('attaches the tarball, SHA256SUMS, install.sh and install.ps1 to the GitHub release', () => {
+    const release = JSON.parse(read('.releaserc.json'));
+    const plugin = (name) => release.plugins.find((entry) => [entry].flat()[0] === name);
+    assert.deepEqual(plugin('@semantic-release/npm'), [
+      '@semantic-release/npm',
+      { tarballDir: 'release' },
+    ]);
+    assert.deepEqual(plugin('@semantic-release/exec')[1], {
+      prepareCmd: 'node scripts/assets.mjs release ${nextRelease.version}',
+    });
+    const names = release.plugins.map((entry) => [entry].flat()[0]);
+    assert.ok(names.indexOf('@semantic-release/npm') < names.indexOf('@semantic-release/exec'));
+    assert.ok(names.indexOf('@semantic-release/exec') < names.indexOf('@semantic-release/github'));
+    assert.deepEqual(
+      plugin('@semantic-release/github')[1].assets.map((asset) => asset.path),
+      ['release/slicc-open-*.tgz', 'release/SHA256SUMS', 'install.sh', 'install.ps1']
+    );
+    assert.ok(existsSync(join(root, 'install.sh')));
+    assert.ok(existsSync(join(root, 'install.ps1')));
+    assert.match(read('.gitignore'), /^release\/$/m);
   });
 
   it('keeps Markdown to README.md and AGENTS.md, with no CLAUDE.md', () => {
@@ -87,7 +114,7 @@ describe('the repository', () => {
   });
 
   it('has no comments in its code and config', () => {
-    const hash = /\.(ya?ml|sh)$|^\.git(ignore|attributes)$|^bin\//;
+    const hash = /\.(ya?ml|sh|ps1)$|^\.git(ignore|attributes)$|^bin\/|^\.githooks\//;
     const slash = /\.(m?js|json)$/;
     for (const path of tracked()) {
       if (!existsSync(join(root, path))) continue;
