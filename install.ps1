@@ -125,6 +125,7 @@ try {
 
     $Tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("scopen-install-" + [System.Guid]::NewGuid())
     New-Item -ItemType Directory -Path $Tmp | Out-Null
+    $Extract = $null
     try {
       $Sums = Join-Path $Tmp 'SHA256SUMS'
       Get-File "$Base/SHA256SUMS" $Sums
@@ -155,10 +156,28 @@ try {
       if (-not (Test-Path -LiteralPath (Join-Path (Join-Path $Extract 'host') "$BinName.mjs"))) {
         Stop-Install "$Tgz has no host/$BinName.mjs"
       }
+      & $Node -e 'const p = require(process.argv[1]); process.exit(Object.keys({ ...p.dependencies, ...p.optionalDependencies }).length > 0 ? 0 : 1)' (Join-Path $Extract 'package.json')
+      if ($LASTEXITCODE -eq 0) {
+        $nodeDir = Split-Path -Parent $Node
+        $npmCli = @(
+          (Join-Path $nodeDir 'node_modules/npm/bin/npm-cli.js'),
+          (Join-Path $nodeDir '../lib/node_modules/npm/bin/npm-cli.js')
+        ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+        if (-not $npmCli) { Stop-Install "$Tgz has dependencies, and there is no npm next to $Node" }
+        Push-Location -LiteralPath $Extract
+        try {
+          & $Node $npmCli install --omit=dev --ignore-scripts --no-audit --no-fund | ForEach-Object { [Console]::Error.WriteLine($_) }
+          $npmStatus = $LASTEXITCODE
+        } finally {
+          Pop-Location
+        }
+        if ($npmStatus -ne 0) { Stop-Install "npm install failed for $Tgz" }
+      }
       if (Test-Path -LiteralPath $BundleDir) { Remove-Item -Recurse -Force -LiteralPath $BundleDir }
       Move-Item -LiteralPath $Extract -Destination $BundleDir
     } finally {
       Remove-Item -Recurse -Force -LiteralPath $Tmp -ErrorAction SilentlyContinue
+      if ($Extract -and (Test-Path -LiteralPath $Extract)) { Remove-Item -Recurse -Force -LiteralPath $Extract -ErrorAction SilentlyContinue }
     }
 
     New-Item -ItemType Directory -Force -Path $Dir | Out-Null
@@ -167,9 +186,16 @@ try {
     $Cmd = Join-Path $Dir "$BinName.cmd"
 
     $ps1 = @(
+      '$scopenPrevious = $env:SCOPEN_INSTALL_DIR',
       "`$env:SCOPEN_INSTALL_DIR = $(Get-Quoted $Dir)",
-      "& $(Get-Quoted $Node) $(Get-Quoted $Entry) @args",
-      'exit $LASTEXITCODE',
+      '$scopenStatus = 1',
+      'try {',
+      "  & $(Get-Quoted $Node) $(Get-Quoted $Entry) @args",
+      '  $scopenStatus = $LASTEXITCODE',
+      '} finally {',
+      '  if ($null -eq $scopenPrevious) { Remove-Item -LiteralPath Env:SCOPEN_INSTALL_DIR -ErrorAction SilentlyContinue } else { $env:SCOPEN_INSTALL_DIR = $scopenPrevious }',
+      '}',
+      'exit $scopenStatus',
       ''
     ) -join "`r`n"
     [System.IO.File]::WriteAllText($Launcher, $ps1, (New-Object System.Text.UTF8Encoding $true))
