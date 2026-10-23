@@ -33,7 +33,7 @@ function which(name) {
   return found.status === 0 ? found.stdout.trim() : undefined;
 }
 
-function release(at, as = version, patch = () => {}) {
+function release(at, as = version, patch = () => {}, status = 0) {
   const dir = mkdtempSync(join(scratch, `release-${as}-`));
   const source = mkdtempSync(join(scratch, 'source-'));
   for (const name of ['LICENSE', 'README.md', 'package.json', 'host']) {
@@ -52,7 +52,8 @@ function release(at, as = version, patch = () => {}) {
   const assets = spawnSync(process.execPath, [join(root, 'scripts/assets.mjs'), dir, as], {
     encoding: 'utf8',
   });
-  assert.equal(assets.status, 0, assets.stderr);
+  assert.equal(assets.status, status, assets.stderr);
+  if (status !== 0) return assets;
   if (at) cpSync(dir, at, { recursive: true });
   return dir;
 }
@@ -101,7 +102,11 @@ function depending(spec, field = 'dependencies') {
   };
 }
 
-const npmCache = () => ({ npm_config_cache: mkdtempSync(join(scratch, 'npm-cache-')) });
+const npmCache = () => ({
+  npm_config_cache: mkdtempSync(join(scratch, 'npm-cache-')),
+  npm_config_registry: 'http://127.0.0.1:1/',
+  npm_config_fetch_retries: '0',
+});
 
 function home() {
   return mkdtempSync(join(scratch, 'home-'));
@@ -133,6 +138,31 @@ describe('scripts/assets.mjs', () => {
     assert.equal(readFileSync(join(dir, 'install.ps1'), 'utf8'), readFileSync(installPs1, 'utf8'));
     assert.ok(existsSync(join(dir, `slicc-open-${version}.tgz`)));
     assert.ok(!existsSync(join(dir, `ai-ecoverse-slicc-open-${version}.tgz`)));
+    const noEntry = release(
+      undefined,
+      '0.6.0',
+      (source) => rmSync(join(source, 'host/scopen.mjs')),
+      1
+    );
+    assert.equal(
+      noEntry.stderr,
+      'scripts/assets.mjs: slicc-open-0.6.0.tgz lacks host/scopen.mjs (bin scopen)\n'
+    );
+    const noBin = release(
+      undefined,
+      '0.6.1',
+      (source) => {
+        const path = join(source, 'package.json');
+        const pkg = JSON.parse(readFileSync(path, 'utf8'));
+        delete pkg.bin;
+        writeFileSync(path, JSON.stringify(pkg));
+      },
+      1
+    );
+    assert.equal(
+      noBin.stderr,
+      'scripts/assets.mjs: slicc-open-0.6.1.tgz lacks a package.json with bin\n'
+    );
     const bad = spawnSync(process.execPath, [join(root, 'scripts/assets.mjs'), dir, 'nope']);
     assert.equal(bad.status, 2);
     const none = spawnSync(process.execPath, [join(root, 'scripts/assets.mjs'), scratch, '1.0.0']);
@@ -274,6 +304,57 @@ describe('install.sh', { skip: !curl && 'curl is not installed' }, () => {
     assert.equal(result.status, 1);
     assert.match(result.stderr, /^install\.sh: checksum mismatch for slicc-open-/);
     assert.ok(!existsSync(join(h, 'bin', 'scopen')));
+  });
+
+  it('handles its options before it needs HOME, which only the default directories need', async () => {
+    const bare = env({});
+    delete bare.HOME;
+    const help = await run('sh', [installSh, '--help'], { env: bare });
+    assert.equal(help.status, 0, help.stderr);
+    assert.match(help.stdout, /^usage: install\.sh /);
+    assert.equal((await run('sh', [installSh, '--nope'], { env: bare })).status, 2);
+    for (const args of [[], ['--dir', join(scratch, 'nohome-bin')]]) {
+      const result = await run('sh', [installSh, ...args], { env: bare });
+      assert.equal(result.status, 1, args.join(' '));
+      assert.equal(
+        result.stderr,
+        'install.sh: HOME is not set; give --dir and set XDG_DATA_HOME\n'
+      );
+    }
+    const data = mkdtempSync(join(scratch, 'nohome-data-'));
+    const bin = join(data, 'bin');
+    const result = await run('sh', [installSh, '--dir', bin], {
+      env: { ...bare, XDG_DATA_HOME: data, SLICC_INSTALL_BASE_URL: pathToFileURL(dir).href },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(existsSync(join(data, 'slicc-open', version, 'host/scopen.mjs')));
+  });
+
+  it('writes a launcher that sets NODE_USE_ENV_PROXY=1 only when it is unset', async () => {
+    const h = home();
+    const bin = join(h, 'bin');
+    const result = await run('sh', [installSh, '--dir', bin], {
+      env: env({ HOME: h, SLICC_INSTALL_BASE_URL: pathToFileURL(dir).href }),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const lines = readFileSync(join(bin, 'scopen'), 'utf8').trimEnd().split('\n');
+    assert.match(lines.at(-1), /^exec /);
+    const probe = [
+      ...lines.slice(0, -1),
+      'printf "%s|%s" "$NODE_USE_ENV_PROXY" "$SCOPEN_INSTALL_DIR"',
+    ].join('\n');
+    const unset = env({});
+    delete unset.NODE_USE_ENV_PROXY;
+    for (const [extra, expected] of [
+      [{}, `1|${bin}`],
+      [{ NODE_USE_ENV_PROXY: '0' }, `0|${bin}`],
+    ]) {
+      const shown = spawnSync('sh', ['-c', probe], {
+        env: { ...unset, ...extra },
+        encoding: 'utf8',
+      });
+      assert.equal(shown.stdout, expected);
+    }
   });
 
   it('prints its usage, and rejects bad options with exit 2', async () => {
@@ -456,8 +537,19 @@ describe('install.ps1', () => {
     assert.match(text, /SCOPEN_INSTALL_DIR/);
     assert.doesNotMatch(text, /Invoke-Expression|\biex\b|cmd(\.exe)? \/c|Start-Process/i);
     assert.doesNotMatch(text, /^\s*exit\b/m);
+    assert.match(
+      text,
+      /if \(\$LASTEXITCODE -ne 0 -or \("\$Reported" -ne "\$BundleVersion" -and "\$Reported" -ne "\$BinName \$BundleVersion"\)\)/
+    );
+    assert.ok(text.includes(`'if not defined NODE_USE_ENV_PROXY set "NODE_USE_ENV_PROXY=1"',`));
+    assert.match(text, /Write-Output "To undo: \[Environment\]::SetEnvironmentVariable\('Path', /);
+    assert.match(text, /@\('Restricted', 'AllSigned', 'Undefined'\) -contains \$policy/);
+    assert.doesNotMatch(text, /^\s*Set-ExecutionPolicy/m);
     for (const line of [
       "'$scopenPrevious = $env:SCOPEN_INSTALL_DIR',",
+      "'$scopenProxy = $env:NODE_USE_ENV_PROXY',",
+      "'if ($null -eq $scopenProxy) { $env:NODE_USE_ENV_PROXY = ''1'' }',",
+      "'  if ($null -eq $scopenProxy) { Remove-Item -LiteralPath Env:NODE_USE_ENV_PROXY -ErrorAction SilentlyContinue }',",
       "'try {',",
       "'  $scopenStatus = $LASTEXITCODE',",
       "'} finally {',",
@@ -532,9 +624,15 @@ describe('install.ps1', () => {
       );
       assert.equal(launched.stdout.trim(), version);
       const launcher = join(bin, 'scopen.ps1').replaceAll("'", "''");
-      for (const [before, after] of [
-        ["$env:SCOPEN_INSTALL_DIR = 'before'", 'before'],
-        ['Remove-Item Env:SCOPEN_INSTALL_DIR -ErrorAction SilentlyContinue', 'unset'],
+      const show = (name) =>
+        `'${name}=' + $(if ($null -eq $env:${name}) { 'unset' } else { $env:${name} })`;
+      for (const [before, after, proxy] of [
+        ["$env:SCOPEN_INSTALL_DIR = 'before'; $env:NODE_USE_ENV_PROXY = '0'", 'before', '0'],
+        [
+          'Remove-Item Env:SCOPEN_INSTALL_DIR, Env:NODE_USE_ENV_PROXY -ErrorAction SilentlyContinue',
+          'unset',
+          'unset',
+        ],
       ]) {
         const session = await run(
           pwsh,
@@ -542,12 +640,54 @@ describe('install.ps1', () => {
             '-NoProfile',
             '-NonInteractive',
             '-Command',
-            `${before}; & '${launcher}' --nope 2>$null; 'code=' + $LASTEXITCODE; 'dir=' + $(if ($null -eq $env:SCOPEN_INSTALL_DIR) { 'unset' } else { $env:SCOPEN_INSTALL_DIR })`,
+            `${before}; & '${launcher}' --nope 2>$null; 'code=' + $LASTEXITCODE; ${show('SCOPEN_INSTALL_DIR')}; ${show('NODE_USE_ENV_PROXY')}`,
           ],
           { env: env({}) }
         );
-        assert.deepEqual(session.stdout.trim().split(/\r?\n/), ['code=2', `dir=${after}`]);
+        assert.deepEqual(session.stdout.trim().split(/\r?\n/), [
+          'code=2',
+          `SCOPEN_INSTALL_DIR=${after}`,
+          `NODE_USE_ENV_PROXY=${proxy}`,
+        ]);
       }
+      const probe = join(local, 'probe.mjs');
+      writeFileSync(
+        probe,
+        'process.stdout.write(`${process.env.NODE_USE_ENV_PROXY}|${process.env.SCOPEN_INSTALL_DIR}`);\n'
+      );
+      const entry2 = join(local, 'slicc-open', version, 'host', 'scopen.mjs');
+      const probing = join(local, 'probe.ps1');
+      writeFileSync(
+        probing,
+        readFileSync(join(bin, 'scopen.ps1'), 'utf8').replace(`'${entry2}'`, `'${probe}'`)
+      );
+      const seen = await run(
+        pwsh,
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `Remove-Item Env:NODE_USE_ENV_PROXY -ErrorAction SilentlyContinue; & '${probing}'`,
+        ],
+        { env: env({}) }
+      );
+      assert.equal(seen.stdout.trim(), `1|${bin}`);
+      const restricted = await run(
+        pwsh,
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `function Get-ExecutionPolicy { 'Restricted' }; & '${installPs1}' -Dir '${bin.replaceAll("'", "''")}'`,
+        ],
+        { env: env({ LOCALAPPDATA: local, SLICC_INSTALL_BASE_URL: url }) }
+      );
+      assert.equal(restricted.status, 0, restricted.stderr);
+      assert.match(
+        restricted.stderr,
+        /install\.ps1: the execution policy is Restricted, so PowerShell won't run scopen\.ps1; run Set-ExecutionPolicy -Scope CurrentUser RemoteSigned, or use scopen\.cmd/
+      );
+      assert.doesNotMatch(result.stderr, /execution policy/);
       const help = await run(pwsh, ['-NoProfile', '-File', installPs1, '-Help'], { env: env({}) });
       assert.equal(help.status, 0);
       assert.match(help.stdout, /^usage: install\.ps1 \[-Version VERSION\] \[-Dir DIR\] \[-Help\]/);
