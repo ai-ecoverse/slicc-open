@@ -253,8 +253,13 @@ describe('scopen on macOS', () => {
   });
 
   it('opens a target after -- as an absolute path, without passing -- on', async () => {
-    const result = await scopen({ platform: 'darwin', argv: ['-W', '--', '-weird'] });
+    const result = await scopen({
+      platform: 'darwin',
+      argv: ['-W', '--', '-weird'],
+      extra: { SCOPEN_INSTALL_DIR: '/nowhere' },
+    });
     assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.calls[0].env.SCOPEN_INSTALL_DIR, undefined);
     assert.deepEqual(result.calls[0].argv, ['-W', join(result.cwd, '-weird')]);
   });
 

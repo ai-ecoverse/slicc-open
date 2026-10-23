@@ -159,7 +159,11 @@ async function windows(ctx, plan, values) {
 async function open(ctx, parsed) {
   const resolved = resolveTargets(parsed, ctx.cwd);
   if (resolved.error) return fail(ctx, resolved.error);
-  if (ctx.platform === 'darwin') return macos(ctx, parsed, resolved.targets);
+  if (ctx.platform === 'darwin') {
+    const env = { ...ctx.env };
+    delete env.SCOPEN_INSTALL_DIR;
+    return macos({ ...ctx, env }, parsed, resolved.targets);
+  }
   const plan = settings(parsed, ctx.cwd);
   const values = [...plan.urls, ...resolved.targets.map((target) => target.value)];
   if (plan.stdin) {

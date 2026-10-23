@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   chmodSync,
   cpSync,
@@ -51,8 +52,6 @@ function release(at, as = version, patch = () => {}) {
     encoding: 'utf8',
   });
   assert.equal(assets.status, 0, assets.stderr);
-  cpSync(installSh, join(dir, 'install.sh'));
-  cpSync(installPs1, join(dir, 'install.ps1'));
   if (at) cpSync(dir, at, { recursive: true });
   return dir;
 }
@@ -72,6 +71,10 @@ function run(file, args, options = {}) {
   });
 }
 
+function sha256(path) {
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
+}
+
 function home() {
   return mkdtempSync(join(scratch, 'home-'));
 }
@@ -87,13 +90,19 @@ function env(extra) {
 const curl = which('curl');
 
 describe('scripts/assets.mjs', () => {
-  it('names the tarball slicc-open-<version>.tgz and writes SHA256SUMS', () => {
+  it('names the tarball slicc-open-<version>.tgz and writes SHA256SUMS for it and both installers', () => {
     const dir = release();
-    const sums = readFileSync(join(dir, 'SHA256SUMS'), 'utf8');
-    assert.match(
-      sums,
-      new RegExp(`^[0-9a-f]{64}  slicc-open-${version.replaceAll('.', '\\.')}\\.tgz\\n$`)
+    const lines = readFileSync(join(dir, 'SHA256SUMS'), 'utf8').split('\n');
+    assert.deepEqual(
+      lines.map((line) => line.slice(66)),
+      [`slicc-open-${version}.tgz`, 'install.sh', 'install.ps1', '']
     );
+    for (const line of lines.slice(0, 3)) {
+      const [sum, name] = line.split('  ');
+      assert.equal(sum, sha256(join(dir, name)), name);
+    }
+    assert.equal(readFileSync(join(dir, 'install.sh'), 'utf8'), readFileSync(installSh, 'utf8'));
+    assert.equal(readFileSync(join(dir, 'install.ps1'), 'utf8'), readFileSync(installPs1, 'utf8'));
     assert.ok(existsSync(join(dir, `slicc-open-${version}.tgz`)));
     assert.ok(!existsSync(join(dir, `ai-ecoverse-slicc-open-${version}.tgz`)));
     const bad = spawnSync(process.execPath, [join(root, 'scripts/assets.mjs'), dir, 'nope']);
@@ -217,10 +226,7 @@ describe('install.sh', { skip: !curl && 'curl is not installed' }, () => {
     }
   });
 
-  const xz = which('xz');
-  it('downloads Node 24 when PATH has none or an older one', {
-    skip: !xz && 'xz is not installed',
-  }, async () => {
+  it('downloads Node 24 as .tar.gz when PATH has none or an older one', async () => {
     const os = { darwin: 'darwin', linux: 'linux' }[process.platform];
     const arch = { x64: 'x64', arm64: 'arm64' }[process.arch];
     if (!os || !arch) return;
@@ -233,28 +239,20 @@ describe('install.sh', { skip: !curl && 'curl is not installed' }, () => {
     );
     chmodSync(join(dist, 'build', name, 'bin', 'node'), 0o755);
     mkdirSync(join(dist, 'v24.99.0'));
-    const archive = join(dist, 'v24.99.0', `${name}.tar.xz`);
+    const archive = join(dist, 'v24.99.0', `${name}.tar.gz`);
     const tar = spawnSync('sh', [
       '-c',
-      'tar cf - -C "$1" "$2" | xz -c > "$3"',
+      'tar czf "$3" -C "$1" "$2"',
       'sh',
       join(dist, 'build'),
       name,
       archive,
     ]);
     assert.equal(tar.status, 0, String(tar.stderr));
-    const sum = spawnSync(
-      process.execPath,
-      [
-        '-e',
-        `const c=require('node:crypto');process.stdout.write(c.createHash('sha256').update(require('node:fs').readFileSync(process.argv[1])).digest('hex'))`,
-        archive,
-      ],
-      { encoding: 'utf8' }
-    ).stdout;
+    const sum = sha256(archive);
     writeFileSync(
       join(dist, 'v24.99.0', 'SHASUMS256.txt'),
-      `${'0'.repeat(64)}  other.tar.xz\n${sum}  ${name}.tar.xz\n`
+      `${'0'.repeat(64)}  ${name}.tar.xz\n${sum}  ${name}.tar.gz\n`
     );
     writeFileSync(
       join(dist, 'index.json'),
@@ -286,7 +284,6 @@ describe('install.sh', { skip: !curl && 'curl is not installed' }, () => {
       'dirname',
       'basename',
       'tar',
-      'xz',
       'gzip',
       'ldd',
       'perl',
