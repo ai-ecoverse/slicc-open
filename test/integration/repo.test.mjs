@@ -41,13 +41,21 @@ describe('the repository', () => {
     assert.match(ci, /cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}/);
     const glob = /^\s*test-glob:\s*(\S+)$/m.exec(ci)?.[1];
     assert.ok(glob && pkg.scripts.test.endsWith(` ${glob}`), pkg.scripts.test);
+    assert.match(ci, /^ {6}windows-test: npm run test:windows$/m);
+    assert.match(
+      pkg.scripts['test:windows'],
+      /^node --test .* test\/integration\/windows\.test\.mjs$/
+    );
   });
 
-  it('pins slicc-shared-web and its tools exactly, on the 2.x line', () => {
+  it('pins slicc-shared-web and its tools exactly, on the 2.x line from 2.12.0', () => {
     for (const [name, version] of Object.entries(pkg.devDependencies)) {
       assert.match(version, /^(npm:@[\w-]+\/[\w-]+@)?\d+\.\d+\.\d+(-[\w.]+)?$/, name);
     }
-    assert.match(pkg.devDependencies['@ai-ecoverse/slicc-shared-web'], /^2\./);
+    const [major, minor] = pkg.devDependencies['@ai-ecoverse/slicc-shared-web']
+      .split('.')
+      .map(Number);
+    assert.ok(major === 2 && minor >= 12, 'windows-test needs slicc-shared-web 2.12.0 or later');
     const lefthook = read('lefthook.yml');
     assert.match(lefthook, /^assert_lefthook_installed: true$/m);
     assert.match(lefthook, /node_modules\/@ai-ecoverse\/slicc-shared-web\/lefthook\.yml$/m);

@@ -548,6 +548,8 @@ describe('install.ps1', () => {
     for (const line of [
       "'$scopenPrevious = $env:SCOPEN_INSTALL_DIR',",
       "'$scopenProxy = $env:NODE_USE_ENV_PROXY',",
+      "'$scopenMode = Get-Variable -Name PSNativeCommandArgumentPassing -ValueOnly -ErrorAction SilentlyContinue',",
+      "'  if ($null -ne $scopenMode -and \"$scopenMode\" -ne ''Legacy'') { $scopenText }',",
       "'if ($null -eq $scopenProxy) { $env:NODE_USE_ENV_PROXY = ''1'' }',",
       "'  if ($null -eq $scopenProxy) { Remove-Item -LiteralPath Env:NODE_USE_ENV_PROXY -ErrorAction SilentlyContinue }',",
       "'try {',",
@@ -558,7 +560,7 @@ describe('install.ps1', () => {
     ]) {
       assert.ok(text.includes(line), line);
     }
-    assert.ok(text.includes('`" %* & call :done %%ERRORLEVEL%% & exit /b",\n'));
+    assert.ok(text.includes('`" %* & call :done %%ERRORLEVEL%% & call exit /b %%ERRORLEVEL%%",\n'));
     assert.doesNotMatch(text, /^\s+'\(',$/m);
   });
 
@@ -610,7 +612,7 @@ describe('install.ps1', () => {
       const cmd = readFileSync(join(bin, 'scopen.cmd'), 'utf8');
       const lines = cmd.split('\r\n');
       const at = lines.findIndex((line) =>
-        line.endsWith(` "${entry}" %* & call :done %%ERRORLEVEL%% & exit /b`)
+        line.endsWith(` "${entry}" %* & call :done %%ERRORLEVEL%% & call exit /b %%ERRORLEVEL%%`)
       );
       assert.deepEqual(
         lines.slice(at, at + 5),
@@ -672,6 +674,27 @@ describe('install.ps1', () => {
         { env: env({}) }
       );
       assert.equal(seen.stdout.trim(), `1|${bin}`);
+      const argv = join(local, 'argv.mjs');
+      writeFileSync(argv, 'process.stdout.write(JSON.stringify(process.argv.slice(2)));\n');
+      const passing = join(local, 'argv.ps1');
+      writeFileSync(
+        passing,
+        readFileSync(join(bin, 'scopen.ps1'), 'utf8').replace(`'${entry2}'`, `'${argv}'`)
+      );
+      const tricky = ['a )&%^ b "q" c', 'x"y\\', 'sp ace\\', 'tail\\', '', "it's"];
+      for (const mode of ['Standard', 'Legacy']) {
+        const passed = await run(
+          pwsh,
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            `$PSNativeCommandArgumentPassing = '${mode}'; $a = ConvertFrom-Json $env:T_ARGS; & '${passing}' @a`,
+          ],
+          { env: env({ T_ARGS: JSON.stringify(tricky) }) }
+        );
+        assert.deepEqual(JSON.parse(passed.stdout), tricky, `${mode}: ${passed.stderr}`);
+      }
       const restricted = await run(
         pwsh,
         [

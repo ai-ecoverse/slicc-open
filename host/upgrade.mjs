@@ -52,6 +52,11 @@ export async function upgrade(ctx) {
     }
     const env = { ...ctx.env };
     delete env.SCOPEN_INSTALL_DIR;
+    if (ctx.platform === 'win32') {
+      for (const key of Object.keys(env)) {
+        if (key.toUpperCase() === 'PSMODULEPATH') delete env[key];
+      }
+    }
     const result = await wait(run.tool.path, run.args, {
       env,
       cwd: ctx.cwd,
