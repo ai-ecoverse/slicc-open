@@ -549,7 +549,8 @@ describe('install.ps1', () => {
       "'$scopenPrevious = $env:SCOPEN_INSTALL_DIR',",
       "'$scopenProxy = $env:NODE_USE_ENV_PROXY',",
       "'$scopenMode = Get-Variable -Name PSNativeCommandArgumentPassing -ValueOnly -ErrorAction SilentlyContinue',",
-      "'  if ($null -ne $scopenMode -and \"$scopenMode\" -ne ''Legacy'') { $scopenText }',",
+      "'$scopenLegacy = $PSVersionTable.PSVersion.Major -lt 7 -or \"$scopenMode\" -eq ''Legacy'' -or ($null -eq $scopenMode -and $PSVersionTable.PSVersion -lt [version]''7.3'')',",
+      "'$scopenArgs = @(foreach ($scopenArg in $args) { foreach ($scopenItem in @($scopenArg)) {',",
       "'if ($null -eq $scopenProxy) { $env:NODE_USE_ENV_PROXY = ''1'' }',",
       "'  if ($null -eq $scopenProxy) { Remove-Item -LiteralPath Env:NODE_USE_ENV_PROXY -ErrorAction SilentlyContinue }',",
       "'try {',",
@@ -682,18 +683,24 @@ describe('install.ps1', () => {
         readFileSync(join(bin, 'scopen.ps1'), 'utf8').replace(`'${entry2}'`, `'${argv}'`)
       );
       const tricky = ['a )&%^ b "q" c', 'x"y\\', 'sp ace\\', 'tail\\', '', "it's"];
-      for (const mode of ['Standard', 'Legacy']) {
+      for (const mode of [
+        "$PSNativeCommandArgumentPassing = 'Standard'",
+        "$PSNativeCommandArgumentPassing = 'Legacy'",
+        'Remove-Variable PSNativeCommandArgumentPassing',
+      ]) {
         const passed = await run(
           pwsh,
           [
             '-NoProfile',
             '-NonInteractive',
             '-Command',
-            `$PSNativeCommandArgumentPassing = '${mode}'; $a = ConvertFrom-Json $env:T_ARGS; & '${passing}' @a`,
+            `${mode}; $a = ConvertFrom-Json $env:T_ARGS; & '${passing}' @a; & '${passing}' a,'b c' d`,
           ],
           { env: env({ T_ARGS: JSON.stringify(tricky) }) }
         );
-        assert.deepEqual(JSON.parse(passed.stdout), tricky, `${mode}: ${passed.stderr}`);
+        const [all, list] = passed.stdout.split(/(?<=\])(?=\[)/).map((part) => JSON.parse(part));
+        assert.deepEqual(all, tricky, `${mode}: ${passed.stderr}`);
+        assert.deepEqual(list, ['a', 'b c', 'd'], mode);
       }
       const restricted = await run(
         pwsh,
