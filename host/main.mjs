@@ -199,7 +199,7 @@ export async function run({
     if (!names.includes(name)) continue;
     if (argv.length > 1) return usageError(ctx, `${name} takes no other arguments`);
     if (name === '--upgrade') return upgrade(ctx);
-    say(fds[1], `scopen ${version()}\n`);
+    say(fds[1], `${version()}\n`);
     return 0;
   }
   const problem = check(parsed, platform);

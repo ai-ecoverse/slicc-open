@@ -190,8 +190,8 @@ try {
     [System.IO.File]::WriteAllText($Cmd, $cmdLines, (New-Object System.Text.UTF8Encoding $false))
 
     $Reported = & $Node $Entry --version
-    if ($LASTEXITCODE -ne 0 -or "$Reported" -ne "$BinName $BundleVersion") {
-      Stop-Install "$Entry reports $Reported, not $BinName $BundleVersion"
+    if ($LASTEXITCODE -ne 0 -or "$Reported" -ne "$BundleVersion") {
+      Stop-Install "$Entry reports $Reported, not $BundleVersion"
     }
     Write-Output "$BinName $BundleVersion installed to $Launcher"
 

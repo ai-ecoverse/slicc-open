@@ -87,7 +87,7 @@ The exit status is the same for every command: **0** when everything opened, **1
 | `-v`, `--view` | returns the image inline to the agent | unsupported | unsupported | unsupported |
 | `--size SPEC` | with `-v`, the box the image is fit into | unsupported | unsupported | unsupported |
 | `-h`, `--help` | the usage, to stdout, exit 0 | the same | the same | the same |
-| `--version` | `<cmd> <version>`, to stdout, exit 0 | the same | the same | the same |
+| `--version` | the version alone (`1.2.0`), to stdout, exit 0 | the same | the same | the same |
 | `--upgrade` | see [`--upgrade`](#--upgrade) | the same | the same | the same |
 
 - **Unsupported, everywhere:** `-s` (macOS `open`'s SDK for header search) and header search itself, because `-h` is help in every slicc-open command; `scopen -h NSView` prints the usage.
@@ -106,7 +106,7 @@ The exit status is the same for every command: **0** when everything opened, **1
 | *file or URL* | opens it, exactly as `open` does with one target |
 | `--help` | the synopsis, to stdout, exit 0 |
 | `--manual` | the full usage with the exit codes, to stdout, exit 0 |
-| `--version` | `xdg-open <version>` (slicc-open's version), to stdout, exit 0 |
+| `--version` | slicc-open's version alone (`1.2.0`), to stdout, exit 0 |
 | `--upgrade` | see [`--upgrade`](#--upgrade) |
 
 `xdg-open` takes exactly one target and no other options, as freedesktop's does. Unlike freedesktop's, which exits 1 for a syntax error, 2 for a missing file, 3 for a missing tool and 4 for a failed action, it uses slicc-open's exit codes: 2 for a usage error and 1 for everything that failed.

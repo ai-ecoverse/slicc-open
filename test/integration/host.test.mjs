@@ -763,14 +763,14 @@ describe('scopen options', () => {
 
   it('prints its version', async () => {
     const result = await scopen({ platform: 'linux', argv: ['--version'] });
-    assert.deepEqual([result.code, result.stdout], [0, `scopen ${version}\n`]);
+    assert.deepEqual([result.code, result.stdout], [0, `${version}\n`]);
   });
 
   it('runs as the package bin', () => {
     const result = spawnSync(process.execPath, [join(root, 'host/scopen.mjs'), '--version'], {
       encoding: 'utf8',
     });
-    assert.deepEqual([result.status, result.stdout], [0, `scopen ${version}\n`]);
+    assert.deepEqual([result.status, result.stdout], [0, `${version}\n`]);
     const bad = spawnSync(process.execPath, [join(root, 'host/scopen.mjs'), '--nope'], {
       encoding: 'utf8',
     });
