@@ -191,7 +191,7 @@ try {
       '$scopenProxy = $env:NODE_USE_ENV_PROXY',
       'if ($null -eq $scopenProxy) { $env:NODE_USE_ENV_PROXY = ''1'' }',
       '$scopenMode = Get-Variable -Name PSNativeCommandArgumentPassing -ValueOnly -ErrorAction SilentlyContinue',
-      '$scopenLegacy = $PSVersionTable.PSVersion.Major -lt 7 -or "$scopenMode" -eq ''Legacy'' -or ($null -eq $scopenMode -and $PSVersionTable.PSVersion -lt [version]''7.3'')',
+      '$scopenLegacy = $PSVersionTable.PSVersion.Major -lt 7 -or "$scopenMode" -eq ''Legacy'' -or ($null -eq $scopenMode -and $PSVersionTable.PSVersion.Major -eq 7 -and $PSVersionTable.PSVersion.Minor -lt 3)',
       '$scopenArgs = @(foreach ($scopenArg in $args) { foreach ($scopenItem in @($scopenArg)) {',
       '  $scopenText = "$scopenItem"',
       '  if (-not $scopenLegacy) { $scopenText }',
