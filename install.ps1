@@ -156,7 +156,7 @@ try {
       if (-not (Test-Path -LiteralPath (Join-Path (Join-Path $Extract 'host') "$BinName.mjs"))) {
         Stop-Install "$Tgz has no host/$BinName.mjs"
       }
-      & $Node -e 'const p = require(process.argv[1]); process.exit(Object.keys({ ...p.dependencies, ...p.optionalDependencies }).length > 0 ? 0 : 1)' (Join-Path $Extract 'package.json')
+      & $Node -e 'const f = process.argv[1]; const p = JSON.parse(require(`fs`).readFileSync(f, `utf8`)); if (Object.keys({ ...p.dependencies, ...p.optionalDependencies }).length === 0) process.exit(1); delete p.devDependencies; require(`fs`).writeFileSync(f, JSON.stringify(p, null, 2))' (Join-Path $Extract 'package.json')
       if ($LASTEXITCODE -eq 0) {
         $nodeDir = Split-Path -Parent $Node
         $npmCli = @(
@@ -188,12 +188,15 @@ try {
     $ps1 = @(
       '$scopenPrevious = $env:SCOPEN_INSTALL_DIR',
       "`$env:SCOPEN_INSTALL_DIR = $(Get-Quoted $Dir)",
+      '$scopenProxy = $env:NODE_USE_ENV_PROXY',
+      'if ($null -eq $scopenProxy) { $env:NODE_USE_ENV_PROXY = ''1'' }',
       '$scopenStatus = 1',
       'try {',
       "  & $(Get-Quoted $Node) $(Get-Quoted $Entry) @args",
       '  $scopenStatus = $LASTEXITCODE',
       '} finally {',
       '  if ($null -eq $scopenPrevious) { Remove-Item -LiteralPath Env:SCOPEN_INSTALL_DIR -ErrorAction SilentlyContinue } else { $env:SCOPEN_INSTALL_DIR = $scopenPrevious }',
+      '  if ($null -eq $scopenProxy) { Remove-Item -LiteralPath Env:NODE_USE_ENV_PROXY -ErrorAction SilentlyContinue }',
       '}',
       'exit $scopenStatus',
       ''
@@ -207,6 +210,7 @@ try {
       'for /f "tokens=2 delims=:." %%c in (''chcp'') do set "SCOPEN_CP=%%c"',
       'chcp 65001 >nul',
       "set `"SCOPEN_INSTALL_DIR=$(& $escape $Dir)`"",
+      'if not defined NODE_USE_ENV_PROXY set "NODE_USE_ENV_PROXY=1"',
       "`"$(& $escape $Node)`" `"$(& $escape $Entry)`" %* & call :done %%ERRORLEVEL%% & exit /b",
       ':done',
       'chcp %SCOPEN_CP% >nul',
@@ -216,7 +220,7 @@ try {
     [System.IO.File]::WriteAllText($Cmd, $cmdLines, (New-Object System.Text.UTF8Encoding $false))
 
     $Reported = & $Node $Entry --version
-    if ($LASTEXITCODE -ne 0 -or "$Reported" -ne "$BundleVersion" -and "$Reported" -ne "$BinName $BundleVersion") {
+    if ($LASTEXITCODE -ne 0 -or ("$Reported" -ne "$BundleVersion" -and "$Reported" -ne "$BinName $BundleVersion")) {
       Stop-Install "$Entry reports $Reported, not $BundleVersion"
     }
     Write-Output "$BinName $BundleVersion installed to $Launcher"
@@ -227,7 +231,13 @@ try {
       if ($parts -notcontains $Dir) {
         [System.Environment]::SetEnvironmentVariable('Path', (@($parts) + $Dir) -join ';', 'User')
         Write-Output "Added $Dir to your user PATH; open a new terminal to use $BinName"
+        Write-Output "To undo: [Environment]::SetEnvironmentVariable('Path', (([Environment]::GetEnvironmentVariable('Path', 'User') -split ';') -ne $(Get-Quoted $Dir)) -join ';', 'User')"
       }
+    }
+
+    $policy = "$(Get-ExecutionPolicy)"
+    if (@('Restricted', 'AllSigned', 'Undefined') -contains $policy) {
+      [Console]::Error.WriteLine("install.ps1: the execution policy is $policy, so PowerShell won't run $BinName.ps1; run Set-ExecutionPolicy -Scope CurrentUser RemoteSigned, or use $BinName.cmd")
     }
   }
 } catch {
