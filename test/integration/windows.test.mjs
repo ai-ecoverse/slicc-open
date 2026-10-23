@@ -287,7 +287,14 @@ describe('on real Windows', { skip: !onWindows && 'not Windows' }, () => {
       const tricky = ['a )&%^ b "q" c', 'x"y\\', 'sp ace\\', 'tail\\', '', '%SCOPEN_NOPE%', "it's"];
       const typed = ['a )&%^ b "q" c', 'x"y" z', 'tail\\', '%SCOPEN_NOPE%'];
       const faked = withPath(clean({ FAKE_LOG: fake.log }), `${fake.dir};${pathOf(process.env)}`);
-      const modes = shell === 'pwsh' ? ['', "$PSNativeCommandArgumentPassing = 'Legacy'; "] : [''];
+      const modes =
+        shell === 'pwsh'
+          ? [
+              '',
+              "$PSNativeCommandArgumentPassing = 'Legacy'; ",
+              'Remove-Variable PSNativeCommandArgumentPassing; ',
+            ]
+          : [''];
       for (const mode of modes) {
         const viaPs = await ps(
           exe,
@@ -296,12 +303,28 @@ describe('on real Windows', { skip: !onWindows && 'not Windows' }, () => {
         );
         assert.equal(viaPs.status, 0, `${mode}${viaPs.stderr}`);
       }
+      for (const mode of modes) {
+        const listed = await ps(
+          exe,
+          `${mode}& $env:T_LAUNCHER -a myapp --args a,'b c' d; exit $LASTEXITCODE`,
+          { ...faked, T_LAUNCHER: ps1 }
+        );
+        assert.equal(listed.status, 0, `${mode}${listed.stderr}`);
+      }
       const viaCmd = await batch(
         `"${launcher}" -a myapp "${file}" --args "a )&%^ b \\"q\\" c" "x\\"y\\" z" tail\\ %SCOPEN_NOPE%`,
         faked
       );
       assert.equal(viaCmd.status, 0, viaCmd.stderr);
       const calls = fake.calls();
+      const lists = calls.splice(modes.length, modes.length);
+      for (const [index, mode] of modes.entries()) {
+        assert.deepEqual(
+          lists[index].items,
+          [{ FilePath: 'myapp', ArgumentList: windowsCommandLine(['a', 'b c', 'd']) }],
+          `list ${mode}`
+        );
+      }
       const wanted = [...modes.map((mode) => [`ps1 ${mode}`, tricky]), ['cmd', typed]];
       assert.equal(calls.length, wanted.length, JSON.stringify(calls));
       for (const [index, [how, args]] of wanted.entries()) {
