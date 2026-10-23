@@ -186,8 +186,9 @@ export async function run({
   platform = process.platform,
   cwd = process.cwd(),
   fds = [0, 1, 2],
+  timeout = 60000,
 } = {}) {
-  const ctx = { env, platform, cwd, fds, hidden: false };
+  const ctx = { env, platform, cwd, fds, timeout, hidden: false };
   if (argv.length === 0) {
     say(fds[2], `${usage}\n`);
     return 2;
