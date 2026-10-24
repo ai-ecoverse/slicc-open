@@ -57,7 +57,7 @@ try {
 
     function Test-Node([string]$Path) {
       try {
-        $reported = & $Path --version 2>$null
+        $reported = & { $ErrorActionPreference = 'Continue'; & $Path --version 2>$null }
       } catch {
         return $false
       }
@@ -155,7 +155,7 @@ try {
       $Extract = Join-Path $DataDir (".bundle-" + [System.Guid]::NewGuid())
       New-Item -ItemType Directory -Force -Path $Extract | Out-Null
       $tar = if ($OnWindows) { Join-Path $env:SystemRoot 'System32\tar.exe' } else { 'tar' }
-      & $tar -xzf $Tarball -C $Extract --strip-components=1
+      & { $ErrorActionPreference = 'Continue'; & $tar -xzf $Tarball -C $Extract --strip-components=1 }
       if ($LASTEXITCODE -ne 0) { Stop-Install "could not unpack $Tgz" }
       $Entry = Join-Path (Join-Path $BundleDir 'host') "$BinName.mjs"
       if (-not (Test-Path -LiteralPath (Join-Path (Join-Path $Extract 'host') "$BinName.mjs"))) {
@@ -171,7 +171,7 @@ try {
         if (-not $npmCli) { Stop-Install "$Tgz has dependencies, and there is no npm next to $Node" }
         Push-Location -LiteralPath $Extract
         try {
-          & $Node $npmCli install --omit=dev --ignore-scripts --no-audit --no-fund | ForEach-Object { [Console]::Error.WriteLine($_) }
+          & { $ErrorActionPreference = 'Continue'; & $Node $npmCli install --omit=dev --ignore-scripts --no-audit --no-fund | ForEach-Object { [Console]::Error.WriteLine($_) } }
           $npmStatus = $LASTEXITCODE
         } finally {
           Pop-Location
@@ -207,6 +207,7 @@ try {
       '  }',
       '} })',
       '$PSNativeCommandUseErrorActionPreference = $false',
+      '$ErrorActionPreference = ''Continue''',
       '$scopenStatus = 1',
       'try {',
       "  & $(Get-Quoted $Node) $(Get-Quoted $Entry) @scopenArgs",

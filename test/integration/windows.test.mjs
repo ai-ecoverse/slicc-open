@@ -275,10 +275,33 @@ describe('on real Windows', { skip: !onWindows && 'not Windows' }, () => {
       );
       const strictRun = await ps(
         exe,
-        `${strict}; & $env:T_LAUNCHER --nope 2>$null; 'code=' + $LASTEXITCODE`,
+        `${strict}; & $env:T_LAUNCHER --nope 2>$null; 'code=' + $LASTEXITCODE; 'eap=' + $ErrorActionPreference; 'native=' + $PSNativeCommandUseErrorActionPreference`,
         { ...env, T_LAUNCHER: join(strictBin, 'scopen.ps1') }
       );
-      assert.equal(strictRun.stdout.trim(), 'code=2', strictRun.stderr);
+      assert.deepEqual(
+        lines(strictRun.stdout),
+        ['code=2', 'eap=Stop', 'native=True'],
+        strictRun.stderr
+      );
+      const corruptBase = release(`corrupt-${shell}`, '0.6.0');
+      const corruptDir = join(served, `corrupt-${shell}`);
+      const tgz = join(corruptDir, 'slicc-open-0.6.0.tgz');
+      const whole = readFileSync(tgz);
+      writeFileSync(tgz, whole.subarray(0, whole.length >> 1));
+      writeFileSync(join(corruptDir, 'SHA256SUMS'), `${sha256(tgz)}  slicc-open-0.6.0.tgz\n`);
+      const strictCorrupt = await ps(
+        exe,
+        `${strict}; & $env:T_PS1 -Version 0.6.0 -Dir $env:T_DIR 2>&1; exit $LASTEXITCODE`,
+        clean({
+          LOCALAPPDATA: strictLocal,
+          SLICC_INSTALL_BASE_URL: corruptBase,
+          T_PS1: installPs1,
+          T_DIR: strictBin,
+        })
+      );
+      assert.equal(strictCorrupt.status, 1, strictCorrupt.stdout);
+      assert.match(strictCorrupt.stderr, /install\.ps1: could not unpack slicc-open-0\.6\.0\.tgz/);
+      assert.ok(!existsSync(join(strictLocal, 'slicc-open', '0.6.0')));
 
       const pages = await batch(`chcp & "${launcher}" --version & chcp`, env);
       const [before, , after] = lines(pages.stdout);
