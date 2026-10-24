@@ -89,7 +89,11 @@ try {
         Get-File "$NodeDist/$nodeVersion/SHASUMS256.txt" (Join-Path $tmp 'SHASUMS256.txt')
         Get-File "$NodeDist/$nodeVersion/$archive" (Join-Path $tmp $archive)
         Test-Sum (Join-Path $tmp $archive) (Get-Sum (Join-Path $tmp 'SHASUMS256.txt') $archive)
-        Expand-Archive -LiteralPath (Join-Path $tmp $archive) -DestinationPath $tmp
+        try {
+          Expand-Archive -LiteralPath (Join-Path $tmp $archive) -DestinationPath $tmp
+        } catch {
+          Stop-Install "could not unpack $archive"
+        }
         New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
         $nodeDir = Join-Path $DataDir 'node'
         if (Test-Path -LiteralPath $nodeDir) { Remove-Item -Recurse -Force -LiteralPath $nodeDir }
