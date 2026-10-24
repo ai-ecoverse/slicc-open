@@ -7,6 +7,7 @@ param(
 try {
   & {
     $ErrorActionPreference = 'Stop'
+    $PSNativeCommandUseErrorActionPreference = $false
     $ProgressPreference = 'SilentlyContinue'
 
     $BinName = 'scopen'
@@ -205,6 +206,7 @@ try {
       '    if ($PSVersionTable.PSEdition -ne ''Core'' -and $scopenText -match ''\s'') { $scopenText -replace ''(\\+)$'', ''$1$1'' } else { $scopenText }',
       '  }',
       '} })',
+      '$PSNativeCommandUseErrorActionPreference = $false',
       '$scopenStatus = 1',
       'try {',
       "  & $(Get-Quoted $Node) $(Get-Quoted $Entry) @scopenArgs",

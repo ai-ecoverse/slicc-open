@@ -773,6 +773,43 @@ describe('install.ps1', () => {
         /install\.ps1: the execution policy is Restricted, so PowerShell won't run scopen\.ps1; run Set-ExecutionPolicy -Scope CurrentUser RemoteSigned, or use scopen\.cmd/
       );
       assert.doesNotMatch(result.stderr, /execution policy/);
+      const strict =
+        "$PSNativeCommandUseErrorActionPreference = $true; $ErrorActionPreference = 'Stop'";
+      const strictLocal = home();
+      const strictBin = join(strictLocal, 'bin');
+      const strictInstall = await run(
+        pwsh,
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `${strict}; & $env:T_PS1 -Dir $env:T_DIR; exit $LASTEXITCODE`,
+        ],
+        {
+          env: env({
+            LOCALAPPDATA: strictLocal,
+            SLICC_INSTALL_BASE_URL: url,
+            T_PS1: installPs1,
+            T_DIR: strictBin,
+          }),
+        }
+      );
+      assert.equal(strictInstall.status, 0, strictInstall.stderr);
+      assert.equal(
+        strictInstall.stdout.split(/\r?\n/)[0],
+        `scopen ${version} installed to ${join(strictBin, 'scopen.ps1')}`
+      );
+      const strictRun = await run(
+        pwsh,
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `${strict}; & $env:T_LAUNCHER --nope 2>$null; 'code=' + $LASTEXITCODE`,
+        ],
+        { env: env({ T_LAUNCHER: join(strictBin, 'scopen.ps1') }) }
+      );
+      assert.equal(strictRun.stdout.trim(), 'code=2', strictRun.stderr);
       const help = await run(pwsh, ['-NoProfile', '-File', installPs1, '-Help'], { env: env({}) });
       assert.equal(help.status, 0);
       assert.match(help.stdout, /^usage: install\.ps1 \[-Version VERSION\] \[-Dir DIR\] \[-Help\]/);
@@ -826,6 +863,29 @@ describe('install.ps1', () => {
       );
       assert.equal(failed.status, 1);
       assert.match(failed.stderr, /install\.ps1: npm install failed for slicc-open-0\.7\.0\.tgz/);
+      const strictFailed = await run(
+        pwsh,
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `${strict}; & $env:T_PS1 -Version 0.7.0 -Dir $env:T_DIR; exit $LASTEXITCODE`,
+        ],
+        {
+          env: env({
+            LOCALAPPDATA: local,
+            SLICC_INSTALL_BASE_URL: url,
+            T_PS1: installPs1,
+            T_DIR: bin,
+            ...npmCache(),
+          }),
+        }
+      );
+      assert.equal(strictFailed.status, 1);
+      assert.match(
+        strictFailed.stderr,
+        /install\.ps1: npm install failed for slicc-open-0\.7\.0\.tgz/
+      );
       release(served, '0.6.0');
       const tgz = join(served, 'slicc-open-0.6.0.tgz');
       const whole = readFileSync(tgz);

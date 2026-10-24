@@ -254,6 +254,32 @@ describe('on real Windows', { skip: !onWindows && 'not Windows' }, () => {
         2
       );
 
+      const strict =
+        "$PSNativeCommandUseErrorActionPreference = $true; $ErrorActionPreference = 'Stop'";
+      const strictLocal = mkdtempSync(join(scratch, 'local-'));
+      const strictBin = join(strictLocal, 'bin');
+      const strictInstall = await ps(
+        exe,
+        `${strict}; & $env:T_PS1 -Dir $env:T_DIR; exit $LASTEXITCODE`,
+        clean({
+          LOCALAPPDATA: strictLocal,
+          SLICC_INSTALL_BASE_URL: base,
+          T_PS1: installPs1,
+          T_DIR: strictBin,
+        })
+      );
+      assert.equal(strictInstall.status, 0, strictInstall.stderr);
+      assert.equal(
+        lines(strictInstall.stdout)[0],
+        `scopen ${version} installed to ${join(strictBin, 'scopen.ps1')}`
+      );
+      const strictRun = await ps(
+        exe,
+        `${strict}; & $env:T_LAUNCHER --nope 2>$null; 'code=' + $LASTEXITCODE`,
+        { ...env, T_LAUNCHER: join(strictBin, 'scopen.ps1') }
+      );
+      assert.equal(strictRun.stdout.trim(), 'code=2', strictRun.stderr);
+
       const pages = await batch(`chcp & "${launcher}" --version & chcp`, env);
       const [before, , after] = lines(pages.stdout);
       assert.equal(before, after, pages.stdout);
